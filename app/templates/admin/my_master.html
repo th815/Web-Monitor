@@ -1,0 +1,12 @@
+{% extends 'admin/base.html' %}
+
+{# This block is used to add custom CSS or JavaScript #}
+{% block head_tail %}
+  {{ super() }}
+  <style>
+    /* You can add custom CSS styles here if needed */
+    .navbar-brand {
+      font-weight: bold;
+    }
+  </style>
+{% endblock %}

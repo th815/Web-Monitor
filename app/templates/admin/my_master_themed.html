@@ -1,0 +1,17 @@
+{% extends 'admin/base.html' %}
+
+{# 这个 block 是唯一需要我们重写的东西 #}
+{% block head_css %}
+    {# 优先从 session 中获取主题，如果 session 里没有，就用 config.py 里的默认主题 #}
+    {% set current_theme = session.get('admin_theme') or admin_view.admin.swatch or 'default' %}
+
+    <link href="{{ admin_static.url(filename='bootstrap/bootstrap4/css/bootstrap.min.css', v='4.2.1') }}" rel="stylesheet">
+    {% if current_theme != 'default' %}
+    <link href="{{ admin_static.url(filename='bootstrap/bootstrap4/swatch/' + current_theme|lower + '/bootstrap.min.css', v='4.2.1') }}" rel="stylesheet">
+    {% endif %}
+    <link href="{{ admin_static.url(filename='admin/css/bootstrap4/admin.css', v='1.1.1') }}" rel="stylesheet">
+    <link href="{{ admin_static.url(filename='bootstrap/bootstrap4/css/font-awesome.min.css', v='4.7.0') }}" rel="stylesheet">
+    {% for css in admin_view.extra_css %}
+    <link href="{{ url_for('static', filename=css) }}" rel="stylesheet">
+    {% endfor %}
+{% endblock %}

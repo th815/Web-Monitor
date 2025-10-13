@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>网站健康监控面板 | TIANHAO DEVOPS TOOLS</title>
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+
+    <!-- 【关键修复1】在这里将数据直接注入为 JavaScript 全局变量 -->
+    <script>
+        window.INITIAL_STATUSES = {{ initial_statuses_json|safe }};
+        window.DATA_RETENTION_DAYS = {{ DATA_RETENTION_DAYS }};
+    </script>
+</head>
+<!-- 【关键修复2】移除 body 标签上的 data-* 属性 -->
+<body>
+
+   <div class="container">
+        <!-- ... (页面的其他所有 HTML 结构保持不变) ... -->
+        <h1>网站健康监控面板</h1>
+
+        <div id="status-wall-container">
+            <h2>实时状态概览</h2>
+            <div id="status-wall"></div>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label class="group-title">选择网站:</label>
+                <div class="options-wrapper" id="site-selector">
+                    {% for site in sites %}
+                    <label class="site-selector-label">
+                        <input type="checkbox" name="site" value="{{ site }}" checked>
+                        <span>{{ site }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+                <button id="select-all" class="control-btn">全选</button>
+                <button id="deselect-all" class="control-btn">全不选</button>
+            </div>
+            <div class="control-group">
+                <label class="group-title">选择时间范围:</label>
+                <div class="options-wrapper" id="time-range-selector">
+                    <button data-range="1h" class="time-btn active">1小时</button>
+                    <button data-range="6h" class="time-btn">6小时</button>
+                    <button data-range="24h" class="time-btn">1天</button>
+                    <button data-range="7d" class="time-btn">7天</button>
+                    <button data-range="1m" class="time-btn">1个月</button>
+                </div>
+                <input type="text" id="custom-time-range" placeholder="或选择自定义日期范围">
+            </div>
+        </div>
+
+        <div class="uptime-history-container">
+            <h2>Uptime 历史状态</h2>
+            <div id="uptime-history-charts"></div>
+        </div>
+
+        <div class="chart-container">
+            <h2>可用率对比 (%)</h2>
+            <div id="uptime-chart" style="width: 100%; height: 400px;"></div>
+        </div>
+
+        <div class="chart-container">
+            <h2>响应时间对比 (秒)</h2>
+            <div id="response-time-chart" style="width: 100%; height: 400px;"></div>
+        </div>
+    </div>
+
+    <footer>
+        <p>&copy; 2025 - {{ current_year }} TIANHAO DEVOPS TOOLS. All Rights Reserved.</p>
+        <p><a href="{{ url_for('admin.index') }}" target="_blank">后台管理</a></p>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.3.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

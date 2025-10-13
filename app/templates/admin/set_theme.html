@@ -1,0 +1,22 @@
+{% extends 'admin/master.html' %}
+
+{% block body %}
+  <div class="container mt-4">
+    <h2>选择后台主题</h2>
+    <p class="lead">点击下方链接即可立即切换主题，您的选择将被自动保存。</p>
+    <hr>
+    <div class="list-group">
+      {# 从 session 中获取当前主题，用于高亮显示 #}
+      {% set current_theme = session.get('admin_theme') or admin_view.admin.swatch or 'default' %}
+
+      {# 循环 __init__.py 中定义的 themes 列表 #}
+      {% for theme_name in themes %}
+        {% set theme_lower = theme_name | lower %}
+        <a href="{{ url_for('admin.set_theme', theme_name=theme_lower) }}"
+           class="list-group-item list-group-item-action {% if current_theme == theme_lower %}active{% endif %}">
+          {{ theme_name }}
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+{% endblock %}

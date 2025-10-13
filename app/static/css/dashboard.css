@@ -1,0 +1,183 @@
+/* --- 全局与布局 --- */
+body {
+font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+background-color: #f4f7f9;
+margin: 0;
+padding: 20px;
+color: #333;
+-webkit-font-smoothing: antialiased;
+-moz-osx-font-smoothing: grayscale;
+}
+
+.container {
+max-width: 1400px;
+margin: 0 auto;
+}
+
+h1, h2 {
+color: #2c3e50;
+border-bottom: 2px solid #e0e0e0;
+padding-bottom: 10px;
+font-weight: 600;
+}
+
+/* --- 卡片式容器 --- */
+.chart-container, .controls, .uptime-history-container {
+background-color: #ffffff;
+border-radius: 8px;
+box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+padding: 20px;
+margin-bottom: 20px;
+border: 1px solid #e9ecef;
+}
+
+/* --- 实时状态墙 --- */
+#status-wall {
+display: grid;
+grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+gap: 15px;
+margin-bottom: 20px;
+}
+
+.status-card {
+padding: 15px;
+border-radius: 8px;
+box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+border-left: 5px solid;
+transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.status-card:hover {
+transform: translateY(-4px);
+box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+}
+
+.status-card.status-ok { border-color: #2ecc71; }
+.status-card.status-slow { border-color: #f39c12; }
+.status-card.status-down { border-color: #e74c3c; }
+
+.status-card h3 {
+margin: 0 0 10px;
+font-size: 1.1em;
+}
+
+.status-card p {
+margin: 5px 0;
+font-size: 14px;
+color: #555;
+}
+
+/* --- 控制器区域 (核心美化) --- */
+.controls {
+display: flex;
+flex-wrap: wrap;
+gap: 30px;
+align-items: center;
+}
+
+.control-group {
+display: flex;
+align-items: center;
+gap: 15px;
+}
+
+.control-group label.group-title {
+font-weight: bold;
+font-size: 16px;
+white-space: nowrap;
+}
+
+.options-wrapper {
+display: flex;
+flex-wrap: wrap;
+gap: 10px;
+}
+
+/* 隐藏原始的 checkbox */
+.site-selector-label input[type="checkbox"] {
+display: none;
+}
+
+/* 自定义 checkbox 样式 */
+.site-selector-label span {
+display: block;
+padding: 8px 15px;
+border: 1px solid #ccc;
+border-radius: 20px;
+cursor: pointer;
+transition: all 0.2s ease-in-out;
+background-color: #f7f7f7;
+}
+
+/* 选中时的样式 */
+.site-selector-label input[type="checkbox"]:checked + span {
+background-color: #3498db;
+color: white;
+border-color: #3498db;
+box-shadow: 0 2px 5px rgba(52, 152, 219, 0.3);
+}
+
+/* 按钮样式 */
+.control-btn, .time-btn {
+padding: 8px 15px;
+border: 1px solid #ddd;
+border-radius: 5px;
+cursor: pointer;
+background: #fff;
+transition: all 0.2s ease-in-out;
+}
+
+.control-btn:hover, .time-btn:hover {
+background-color: #f0f0f0;
+border-color: #bbb;
+}
+
+.time-btn.active {
+background: #3498db;
+color: white;
+border-color: #3498db;
+}
+
+#custom-time-range {
+border: 1px solid #ddd;
+padding: 7px 12px;
+border-radius: 5px;
+width: 250px;
+text-align: center;
+background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='currentColor' class='bi bi-calendar-event' viewBox='0 0 16 16'%3E%3Cpath d='M11 6.5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1-.5-.5v-1z'/%3E%3Cpath d='M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z'/%3E%3C/svg%3E") no-repeat 95% center;
+background-size: 16px;
+cursor: pointer;
+}
+
+/* --- Uptime 历史图 --- */
+.uptime-history-item { margin-bottom: 20px; }
+.uptime-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-wrap: wrap; }
+.uptime-title { font-size: 18px; font-weight: bold; }
+.uptime-stats { display: flex; gap: 20px; font-size: 16px; }
+.uptime-stats .response-time { color: #27ae60; font-weight: 500; }
+.uptime-stats .availability { color: #2980b9; font-weight: 500; }
+.uptime-bars-container { display: flex; height: 40px; width: 100%; background: #eee; border-radius: 5px; overflow: hidden; }
+.uptime-bar { flex-grow: 1; }
+.bar-up { background-color: #91cc75; }
+.bar-down { background-color: #ee6666; }
+.bar-nodata { background-color: #f0f0f0; }
+.uptime-labels { display: flex; justify-content: space-between; font-size: 12px; color: #777; margin-top: 5px; }
+
+/* --- 页脚 --- */
+footer {
+text-align: center;
+margin-top: 40px;
+padding: 20px;
+color: #999;
+font-size: 14px;
+border-top: 1px solid #e0e0e0;
+}
+footer a {
+color: #3498db;
+text-decoration: none;
+transition: color 0.2s;
+}
+footer a:hover {
+color: #2980b9;
+}
+

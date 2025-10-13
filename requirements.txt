@@ -1,0 +1,10 @@
+Flask
+Flask-SQLAlchemy
+Flask-APScheduler
+requests
+Jinja2
+Flask-Admin
+gunicorn
+Flask-Login
+Flask-WTF
+Werkzeug

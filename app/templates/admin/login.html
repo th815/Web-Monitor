@@ -1,0 +1,44 @@
+{% extends 'admin/master.html' %}
+
+{% block body %}
+  <div class="container">
+    <div class="row">
+      <div class="col-sm-8 col-md-6 col-lg-4 mx-auto">
+        <div class="card my-5">
+          <div class="card-body">
+            <h2 class="card-title text-center">后台登录</h2>
+
+            {% with messages = get_flashed_messages() %}
+              {% if messages %}
+                <div class="alert alert-warning">
+                  {{ messages[0] }}
+                </div>
+              {% endif %}
+            {% endwith %}
+
+            <form method="POST" action="{{ url_for('admin.login') }}">
+              {{ form.hidden_tag() }}
+
+              {# 【最终修复】不再使用 render_field，直接调用字段 #}
+              {# WTForms 字段自身就支持传递 class_ 参数 #}
+              <div class="form-group">
+                  {{ form.username.label(class="font-weight-bold") }}
+                  {{ form.username(class="form-control", placeholder="用户名") }}
+              </div>
+              <div class="form-group">
+                  {{ form.password.label(class="font-weight-bold") }}
+                  {{ form.password(class="form-control", placeholder="密码") }}
+              </div>
+              <div class="form-group form-check">
+                  {{ form.remember_me(class="form-check-input") }}
+                  {{ form.remember_me.label(class="form-check-label") }}
+              </div>
+
+              <button type="submit" class="btn btn-primary btn-block">登录</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
