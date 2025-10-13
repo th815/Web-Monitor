@@ -10,8 +10,7 @@ A lightweight, beautiful, and powerful self-hosted website health monitoring das
 
 ---
 
-[此处插入项目截图，展示监控面板的主界面]
-*(建议截图尺寸: 1280x720px)*
+![CleanShot 2025-10-13 at 14.39.47](https://fastly.jsdelivr.net/gh/th815/images//blogCleanShot%202025-10-13%20at%2014.39.47.png)
 
 ## ✨ 功能特性 (Features)
 
