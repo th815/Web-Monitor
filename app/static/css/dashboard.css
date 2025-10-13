@@ -162,6 +162,96 @@ cursor: pointer;
 .bar-down { background-color: #ee6666; }
 .bar-nodata { background-color: #f0f0f0; }
 .uptime-labels { display: flex; justify-content: space-between; font-size: 12px; color: #777; margin-top: 5px; }
+/* --- Uptime 历史状态 (连续分段长条图) --- */
+#uptime-history-charts {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.site-uptime-wrapper {
+    display: flex;
+    flex-direction: column;
+}
+
+.site-uptime-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
+.site-uptime-title {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.site-uptime-stats {
+    font-size: 14px;
+    color: #555;
+    display: flex;
+    gap: 15px;
+}
+
+.site-uptime-stats .stat-value {
+    font-weight: 600;
+}
+
+/* 长条图容器 */
+.uptime-bar-container {
+    display: flex;
+    width: 100%;
+    height: 35px; /* 长条图的高度 */
+    border-radius: 5px;
+    overflow: hidden;
+    background-color: #f0f0f0; /* 作为无数据时的背景色 */
+    gap: 1px; /* 分段之间的缝隙 */
+}
+
+/* 每个小分段 */
+.uptime-bar-segment {
+    flex-grow: 1;
+    flex-basis: 0;
+    transition: filter 0.2s;
+    cursor: pointer;
+}
+
+.uptime-bar-segment:hover {
+    filter: brightness(1.1);
+    transform: scaleY(1.05);
+}
+
+/* 分段的颜色，复用 .bar-up/down/slow */
+.bar-up { background-color: #91cc75; }
+.bar-down { background-color: #ee6666; }
+.bar-slow { background-color: #fac858; }
+.bar-nodata { background-color: #f0f0f0; } /* 无数据时，和容器背景色一致 */
+
+
+.uptime-timeline-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #888;
+    margin-top: 5px;
+    padding: 0 5px;
+}
+
+/* --- 悬浮窗样式 (保持不变) --- */
+#uptime-tooltip {
+    background-color: rgba(0, 0, 0, 0.85);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 5px;
+    font-size: 14px;
+    line-height: 1.5;
+    z-index: 1000;
+    transition: opacity 0.2s;
+    max-width: 300px;
+    word-wrap: break-word;
+}
+
 
 /* --- 页脚 --- */
 footer {

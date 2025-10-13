@@ -2,6 +2,7 @@
 import datetime
 import json
 from datetime import timezone
+from collections import defaultdict
 from flask import Blueprint, jsonify, render_template, current_app, flash, url_for, session, redirect, request
 from flask_admin import AdminIndexView, BaseView, expose
 from flask_admin.menu import MenuLink
@@ -160,12 +161,10 @@ def get_health_status():
 
 @main_bp.route('/api/history', methods=['GET'])
 def get_history():
-    """提供历史监控数据的 API"""
+    """提供历史监控数据的 API (已升级为按时间分段聚合)"""
     selected_sites = request.args.getlist('sites')
     start_time_str = request.args.get('start_time')
     end_time_str = request.args.get('end_time')
-
-    # 将前端传来的本地时间字符串转换为 UTC 时间对象进行数据库查询
     try:
         start_time_naive = datetime.datetime.fromisoformat(start_time_str)
         end_time_naive = datetime.datetime.fromisoformat(end_time_str)
@@ -173,58 +172,76 @@ def get_history():
         end_time_utc = end_time_naive.astimezone(timezone.utc)
     except (ValueError, TypeError):
         return jsonify({"error": "无效的时间格式或参数缺失"}), 400
-
     results = {}
-    NUM_BARS = 80  # 定义 Uptime 历史状态图的竖条数量
-
+    NUM_INTERVALS = 90  # 将整个时间范围切分成90个分段
     for site in selected_sites:
-        # 从数据库查询指定时间范围内的日志
+        # 1. 一次性查询所有范围内的日志
         logs = db.session.query(HealthCheckLog).filter(
             HealthCheckLog.site_name == site,
             HealthCheckLog.timestamp.between(start_time_utc, end_time_utc)
         ).order_by(HealthCheckLog.timestamp.asc()).all()
-
-        # 计算可用率
+        # 2. 计算总体统计数据 (用于图表和右上角显示)
         up_count = sum(1 for log in logs if log.status in ['正常', '访问过慢'])
-        down_count = len(logs) - up_count
-
-        # 计算平均响应时间
+        availability = (up_count / len(logs) * 100) if logs else 0
         valid_times = [log.response_time_seconds for log in logs if log.response_time_seconds is not None]
         avg_response_time = sum(valid_times) / len(valid_times) if valid_times else 0
+        # 3. 【核心逻辑】将日志分配到时间分段中
+        total_duration = (end_time_utc - start_time_utc).total_seconds()
+        interval_duration = total_duration / NUM_INTERVALS if total_duration > 0 else 0
 
-        # --- Uptime 图数据聚合逻辑 ---
-        uptime_bars = ['nodata'] * NUM_BARS
-        if logs:
-            total_duration = (end_time_utc - start_time_utc).total_seconds()
-            if total_duration > 1:
-                interval_seconds = total_duration / NUM_BARS
-                bar_statuses = [-1] * NUM_BARS  # -1: nodata, 0: down, 1: up
+        intervals = [defaultdict(list) for _ in range(NUM_INTERVALS)]
 
-                for log in logs:
-                    # 必须将从数据库读出的 naive 时间也转换为 aware 时间才能进行计算
-                    log_timestamp_utc = log.timestamp.replace(tzinfo=timezone.utc)
-                    time_since_start = (log_timestamp_utc - start_time_utc).total_seconds()
-                    bar_index = int(time_since_start / interval_seconds)
+        for log in logs:
+            log_timestamp_utc = log.timestamp.replace(tzinfo=timezone.utc)
+            time_since_start = (log_timestamp_utc - start_time_utc).total_seconds()
+            index = min(int(time_since_start / interval_duration), NUM_INTERVALS - 1)
+            intervals[index]['logs'].append(log)
+        # 4. 处理每个分段，生成最终给前端的数据
+        uptime_intervals = []
+        for i, interval_data in enumerate(intervals):
+            interval_logs = interval_data['logs']
+            start_interval_utc = start_time_utc + datetime.timedelta(seconds=i * interval_duration)
+            end_interval_utc = start_interval_utc + datetime.timedelta(seconds=interval_duration)
+            # 将UTC时间转回用户的本地时区以供显示
+            local_tz = start_time_naive.tzinfo
+            start_display = start_interval_utc.astimezone(local_tz).strftime('%H:%M')
+            end_display = end_interval_utc.astimezone(local_tz).strftime('%H:%M, %m/%d')
+            if not interval_logs:
+                status = "nodata"
+                details = "无数据"
+            else:
+                if any(log.status == '无法访问' for log in interval_logs):
+                    status = "down"
+                    # 提取该时段内的错误信息
+                    down_log = next((log for log in interval_logs if log.status == '无法访问'), None)
+                    details = "未知错误"
+                    if down_log:
+                        error_text = getattr(down_log, 'error_detail', '无详细信息')
+                        details = f"错误: {error_text or '无详细信息'}"
+                elif any(log.status == '访问过慢' for log in interval_logs):
+                    status = "slow"
+                    details = "响应过慢"
+                else:
+                    status = "up"
+                    details = "一切正常"
 
-                    if 0 <= bar_index < NUM_BARS:
-                        # 只要一个时间段内有一次 down，整个时间段就标记为 down
-                        if bar_statuses[bar_index] == -1:
-                            bar_statuses[bar_index] = 1 if log.status != '无法访问' else 0
-                        elif log.status == '无法访问':
-                            bar_statuses[bar_index] = 0
-
-                status_map = {-1: 'nodata', 0: 'down', 1: 'up'}
-                uptime_bars = [status_map[s] for s in bar_statuses]
-
-        # 组装返回给前端的 JSON 数据
+            uptime_intervals.append({
+                "time_range": f"{start_display} - {end_display}",
+                "status": status,
+                "details": details
+            })
+        # 5. 组装最终给前端的 JSON
         results[site] = {
-            "availability": {"up_count": up_count, "down_count": down_count},
-            "avg_response_time": avg_response_time,
+            "overall_stats": {
+                "avg_response_time": avg_response_time,
+                "availability": availability
+            },
+            "uptime_intervals": uptime_intervals,
+            # ECharts 折线图仍然需要原始的响应时间数据
             "response_times": {
                 "timestamps": [log.timestamp.strftime('%Y-%m-%d %H:%M') for log in logs],
                 "times": [log.response_time_seconds for log in logs]
-            },
-            "uptime_bars": uptime_bars
+            }
         }
-    return jsonify(results)
 
+    return jsonify(results)

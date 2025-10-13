@@ -40,6 +40,6 @@ class HealthCheckLog(db.Model):
     timestamp = db.Column(db.DateTime, default=datetime.datetime.utcnow, index=True)
     status = db.Column(db.String, nullable=False)
     response_time_seconds = db.Column(db.Float)
-
+    error_detail = db.Column(db.String(500), nullable=True)
     def __repr__(self):
         return f'<HealthCheckLog {self.site_name} {self.status}>'

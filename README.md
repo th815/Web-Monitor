@@ -90,6 +90,8 @@ A lightweight, beautiful, and powerful self-hosted website health monitoring das
 本项目包含一个自定义的 Flask 命令，用于初始化数据库并创建第一个管理员用户。
 
 ```bash
+source .venv/bin/activate
+export FLASK_APP=run.py
 flask init-db
 ```
 执行此命令后，会：

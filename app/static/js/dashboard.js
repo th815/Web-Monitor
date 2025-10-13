@@ -4,7 +4,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const uptimeChart = echarts.init(document.getElementById('uptime-chart'));
     const responseTimeChart = echarts.init(document.getElementById('response-time-chart'));
     const uptimeHistoryContainer = document.getElementById('uptime-history-charts');
-    // 【关键修复】直接从 window 对象获取已经解析好的数据，不再需要 JSON.parse
+    const tooltip = document.getElementById('uptime-tooltip');
+    // 直接从 window 对象获取已经解析好的数据，不再需要 JSON.parse
     const initialStatuses = window.INITIAL_STATUSES;
     const dataRetentionDays = window.DATA_RETENTION_DAYS;
     let currentParams = {};
@@ -27,95 +28,106 @@ document.addEventListener('DOMContentLoaded', () => {
             uptimeHistoryContainer.innerHTML = '<p>没有选中任何网站或当前时间范围无数据。</p>';
             return;
         }
-        const { start_date, end_date } = currentParams;
         let content = '';
+        const { start_date, end_date } = currentParams;
         for (const siteName in data) {
             const siteData = data[siteName];
-            const total = siteData.availability.up_count + siteData.availability.down_count;
-            const availability = total > 0 ? (siteData.availability.up_count / total * 100).toFixed(2) : 'N/A';
-            const avgTime = siteData.avg_response_time ? siteData.avg_response_time.toFixed(2) + 's' : 'N/A';
-
-            const barsHtml = siteData.uptime_bars.map(bar => {
-                const barClass = `bar-${bar}`; // Simplified class mapping
-                return `<div class="uptime-bar ${barClass}" title="${bar}"></div>`;
+            if (!siteData.uptime_intervals || siteData.uptime_intervals.length === 0) continue;
+            // 1. 生成所有小分段的 HTML
+            const segmentsHtml = siteData.uptime_intervals.map(interval => {
+                // 将数据附加到 data-* 属性，供悬浮窗使用
+                return `<div class="uptime-bar-segment bar-${interval.status}" 
+                             data-time-range="${interval.time_range}" 
+                             data-status="${interval.status}"
+                             data-details="${interval.details}"></div>`;
             }).join('');
+            // 2. 组装每个网站的完整模块
             content += `
-                <div class="uptime-history-item">
-                    <div class="uptime-header">
-                        <div class="uptime-title">${siteName}</div>
-                        <div class="uptime-stats">
-                            <span class="response-time">平均响应: ${avgTime}</span>
-                            <span class="availability">${availability}% 在线率</span>
+                <div class="site-uptime-wrapper">
+                    <div class="site-uptime-header">
+                        <div class="site-uptime-title">${siteName}</div>
+                        <div class="site-uptime-stats">
+                            <span>平均响应: <span class="stat-value">${siteData.overall_stats.avg_response_time.toFixed(2)}s</span></span>
+                            <span><span class="stat-value">${siteData.overall_stats.availability.toFixed(2)}%</span> 在线率</span>
                         </div>
                     </div>
-                    <div class="uptime-bars-container">${barsHtml}</div>
-                    <div class="uptime-labels"><span>${start_date}</span><span>${end_date}</span></div>
+                    <div class="uptime-bar-container">${segmentsHtml}</div>
+                    <div class="uptime-timeline-labels">
+                        <span>${start_date}</span>
+                        <span>${end_date}</span>
+                    </div>
                 </div>`;
         }
-        uptimeHistoryContainer.innerHTML = content;
+        uptimeHistoryContainer.innerHTML = content || '<p>当前时间范围无数据。</p>';
     }
+    // 【修改】渲染对比图表的函数
     function renderComparisonCharts(data) {
         const uptimeCategories = [];
         const uptimeData = [];
-        const responseTimeLegends = [];
-        const responseTimeSeries = [];
-        let allTimestamps = new Set();
         for (const siteName in data) {
-            const { availability, response_times } = data[siteName];
-            const total = availability.up_count + availability.down_count;
-            if (total > 0) {
+            const siteData = data[siteName];
+            if (siteData.uptime_intervals.length > 0) {
                 uptimeCategories.push(siteName);
-                uptimeData.push((availability.up_count / total * 100).toFixed(2));
-                response_times.timestamps.forEach(t => allTimestamps.add(t));
+                // 直接使用后端计算好的总体可用率
+                uptimeData.push(siteData.overall_stats.availability.toFixed(2));
             }
         }
-        const sortedTimestamps = Array.from(allTimestamps).sort();
-        for (const siteName in data) {
-            const total = data[siteName].availability.up_count + data[siteName].availability.down_count;
-            if (total > 0) {
-                responseTimeLegends.push(siteName);
-                const { timestamps, times } = data[siteName].response_times;
-                const seriesData = sortedTimestamps.map(ts => {
-                    const index = timestamps.indexOf(ts);
-                    return index > -1 ? times[index] : null;
-                });
-                responseTimeSeries.push({
-                    name: siteName,
-                    type: 'line',
-                    smooth: true,
-                    data: seriesData,
-                    connectNulls: true
-                });
-            }
-        }
-        // 更新可用率图表
+
+        // 可用率图表 (逻辑和之前一样)
         if (uptimeCategories.length === 0) {
             uptimeChart.setOption({ title: { text: '当前时间范围无可用率数据', left: 'center', top: 'center' } }, true);
         } else {
             uptimeChart.setOption({
-                title: { text: '' },
-                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: '{b}: {c}% 可用' },
+                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
                 xAxis: { type: 'category', data: uptimeCategories },
                 yAxis: { type: 'value', max: 100, axisLabel: { formatter: '{value}%' } },
-                series: [{ data: uptimeData, type: 'bar', barWidth: '40%' }]
+                series: [{
+                    type: 'bar', barWidth: '40%', data: uptimeData,
+                    label: { show: true, position: 'top', formatter: '{c}%', color: '#333' },
+                    itemStyle: {
+                        color: function (params) {
+                            const value = parseFloat(params.value);
+                            if (value >= 99.9) return '#67C23A';
+                            if (value >= 99) return '#91cc75';
+                            if (value >= 95) return '#E6A23C';
+                            return '#F56C6C';
+                        }
+                    }
+                }]
             }, true);
         }
-        // 更新响应时间图表
+        // 响应时间图表 (逻辑和之前一样)
+        const responseTimeLegends = [];
+        const responseTimeSeries = [];
+        let allTimestamps = new Set();
+        Object.keys(data).forEach(siteName => {
+            if (data[siteName].response_times.timestamps.length > 0) {
+                data[siteName].response_times.timestamps.forEach(t => allTimestamps.add(t));
+            }
+        });
+        const sortedTimestamps = Array.from(allTimestamps).sort();
+        Object.keys(data).forEach(siteName => {
+             if (data[siteName].response_times.timestamps.length > 0) {
+                responseTimeLegends.push(siteName);
+                const siteData = data[siteName].response_times;
+                const seriesData = sortedTimestamps.map(ts => {
+                    const index = siteData.timestamps.indexOf(ts);
+                    return index > -1 ? siteData.times[index] : null;
+                });
+                responseTimeSeries.push({ name: siteName, type: 'line', smooth: true, data: seriesData, connectNulls: true });
+            }
+        });
         if (responseTimeLegends.length === 0) {
-            responseTimeChart.setOption({ title: { text: '当前时间范围无响应时间数据', left: 'center', top: 'center' } }, true);
+             responseTimeChart.setOption({ title: { text: '当前时间范围无响应时间数据', left: 'center', top: 'center' } }, true);
         } else {
-            responseTimeChart.setOption({
-                title: { text: '' },
-                tooltip: { trigger: 'axis' },
-                legend: { data: responseTimeLegends, top: 10 },
-                grid: { top: 60, left: 50, right: 50, bottom: 60 },
-                xAxis: { type: 'category', boundaryGap: false, data: sortedTimestamps },
-                yAxis: { type: 'value', name: '响应时间 (秒)' },
-                dataZoom: [{ type: 'inside' }, { type: 'slider' }],
-                series: responseTimeSeries
-            }, true);
+             responseTimeChart.setOption({
+                title: { text: '' }, tooltip: { trigger: 'axis' }, legend: { data: responseTimeLegends, top: 10 },
+                grid: { top: 60, left: 50, right: 50, bottom: 60 }, xAxis: { type: 'category', boundaryGap: false, data: sortedTimestamps },
+                yAxis: { type: 'value', name: '响应时间 (秒)' }, dataZoom: [{ type: 'inside' }, { type: 'slider' }], series: responseTimeSeries
+             }, true);
         }
     }
+
     async function updateDashboard() {
         const selectedSites = Array.from(document.querySelectorAll('#site-selector input:checked')).map(el => el.value);
 
@@ -133,6 +145,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(`/api/history?${siteParams}&${timeParams}`);
             if (!response.ok) throw new Error(`API 请求失败: ${response.status}`);
             const data = await response.json();
+            // 现在这两个函数都会使用新的数据结构
             renderUptimeHistory(data);
             renderComparisonCharts(data);
         } catch (error) {
@@ -141,6 +154,37 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             hideLoading();
         }
+    }
+    // 悬浮窗事件监听函数
+    function setupTooltipEvents() {
+        // 使用事件委托，将监听器绑定在外层容器上，提高性能
+        uptimeHistoryContainer.addEventListener('mouseover', function(e) {
+            // 只在悬浮到 .uptime-bar-segment 元素上时触发
+            const segment = e.target.closest('.uptime-bar-segment');
+            if (segment) {
+                const timeRange = segment.dataset.timeRange;
+                const status = segment.dataset.status;
+                const details = segment.dataset.details;
+
+                // 更新内容并显示
+                tooltip.innerHTML = `<strong>${timeRange}</strong><br>状态: ${status}<br>${details}`;
+                tooltip.style.display = 'block';
+            }
+        });
+        // 核心修改：使用 mousemove 事件来实时更新位置
+        uptimeHistoryContainer.addEventListener('mousemove', function(e) {
+            // 只有当悬浮窗是可见状态时，才更新位置
+            if (tooltip.style.display === 'block') {
+                // pageX 和 pageY 提供了鼠标相对于整个文档的坐标
+                // +15 的偏移量是为了避免鼠标指针直接覆盖在悬浮窗上，导致闪烁
+                tooltip.style.left = e.clientX + 15 + 'px';
+                tooltip.style.top = e.clientY + 15 + 'px';
+            }
+        });
+        // 当鼠标离开整个历史记录容器时，隐藏悬浮窗
+        uptimeHistoryContainer.addEventListener('mouseleave', function(e) {
+            tooltip.style.display = 'none';
+        });
     }
     async function updateStatusWall(initialData = null) {
         const data = initialData || await (await fetch('/health')).json();
@@ -218,6 +262,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- 初始加载 ---
 
     initializeControls();
+    // 【新增】调用此函数来激活悬浮窗
+    setupTooltipEvents();
     // 首次加载时，触发默认激活的时间按钮
     document.querySelector('#time-range-selector button.active').click();
     // 使用传入的初始数据首次渲染状态墙
