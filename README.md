@@ -10,7 +10,7 @@ A lightweight, beautiful, and powerful self-hosted website health monitoring das
 
 ---
 
-![Dashboard Screenshot](https://fastly.jsdelivr.net/gh/th815/images//blogCleanShot%202025-10-13%20at%2014.39.47.png)
+![Dashboard Screenshot](https://fastly.jsdelivr.net/gh/th815/images//blogCleanShot%202025-10-14%20at%2018.42.44.png)
 
 ## ✨ 功能特性 (Features)
 
