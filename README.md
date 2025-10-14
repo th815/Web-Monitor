@@ -4,36 +4,39 @@
 ![Python Version](https://img.shields.io/badge/Python-3.9+-brightgreen.svg)
 ![Framework](https://img.shields.io/badge/Framework-Flask-orange.svg)
 
-一个轻量、美观且功能强大的自托管网站健康监控面板。使用 Python 和 Flask 构建，提供实时状态概览、历史数据可视化和安全的后台管理功能。
+一个轻量、美观且功能强大的自托管网站健康监控面板。使用 Python 和 Flask 构建，提供实时状态概览、历史数据可视化、安全的后台管理和灵活的告警通知功能。
 
-A lightweight, beautiful, and powerful self-hosted website health monitoring dashboard. Built with Python and Flask, it provides a real-time status overview, historical data visualization, and a secure admin backend.
+A lightweight, beautiful, and powerful self-hosted website health monitoring dashboard. Built with Python and Flask, it provides a real-time status overview, historical data visualization, a secure admin backend, and flexible alerting.
 
 ---
 
-![CleanShot 2025-10-13 at 14.39.47](https://fastly.jsdelivr.net/gh/th815/images//blogCleanShot%202025-10-13%20at%2014.39.47.png)
+![Dashboard Screenshot](https://fastly.jsdelivr.net/gh/th815/images//blogCleanShot%202025-10-13%20at%2014.39.47.png)
 
 ## ✨ 功能特性 (Features)
 
-*   **实时状态墙**: 以卡片形式直观展示所有受监控网站的当前状态（正常、访问过慢、无法访问）和响应时间。
-*   **历史数据可视化**:
-    *   **Uptime 历史条**: 精确展示过去一段时间内每个站点的在线/离线记录。
-    *   **ECharts 动态图表**: 对比多个站点的可用率和平均响应时间。
-*   **灵活的时间选择器**: 支持预设时间范围（1小时、1天、7天等）和自定义日期范围查询。
+*   **实时状态墙**: 以卡片形式直观展示所有网站的当前状态（正常、访问过慢、无法访问）、响应时间和上次检查时间。
+*   **精确的历史时间轴**: 使用 ECharts 自定义系列，将每个站点的在线、慢速、宕机和无数据时段渲染为精确的连续时间块。
+*   **聚合统计图表**: 动态对比多个站点的可用率（%）和响应时间趋势。
+*   **灵活的时间选择器**: 支持预设时间范围（1小时、6小时、1天、7天、1个月）和自定义日期范围查询。
 *   **安全的后台管理**:
-    *   基于 Flask-Admin 和 Flask-Login 构建，提供安全的管理员登录认证。
+    *   基于 **Flask-Admin** 和 **Flask-Login** 构建，提供安全的管理员登录认证。
     *   在后台轻松添加、编辑、删除和禁用受监控的网站。
-    *   查看详细的原始监控日志。
-*   **动态主题切换**: 管理员可以根据个人喜好在后台一键切换界面主题。
-*   **后台定时任务**: 使用 APScheduler 自动执行健康检查和数据清理任务。
-*   **易于扩展**: 可通过配置轻松对接企业微信等通知渠道（当前已预留 Webhook 逻辑）。
+    *   查看详细的原始监控日志，支持搜索和筛选。
+*   **动态主题切换**: 管理员可以根据个人喜好在后台一键切换超过20种界面主题。
+*   **企业微信/Webhook 告警**:
+    *   当网站连续多次无法访问时，通过 Webhook 发送告警通知。
+    *   当网站从故障中恢复时，发送恢复通知。
+    *   内置防抖机制（连续失败N次后才告警），避免网络波动造成的频繁骚扰。
+*   **后台定时任务**: 使用 **APScheduler** 自动执行周期性健康检查和历史数据清理任务。
+*   **数据库平滑升级**: 集成 **Flask-Migrate**，修改数据模型后无需删库跑路，一条命令即可热更新数据库结构，保留所有历史数据。
 
 ## 🛠️ 技术栈 (Tech Stack)
 
-*   **后端 (Backend)**: Python 3.9+, Flask, SQLAlchemy, Flask-Admin, Flask-Login, APScheduler
+*   **后端 (Backend)**: Python 3.9+, Flask, SQLAlchemy, Flask-Admin, Flask-Login, Flask-Migrate, APScheduler
 *   **前端 (Frontend)**: HTML5, CSS3, Vanilla JavaScript, ECharts, Flatpickr
-*   **数据库 (Database)**: SQLite (默认), 可轻松配置为 PostgreSQL, MySQL 等。
+*   **数据库 (Database)**: SQLite (默认), 可通过 SQLAlchemy 轻松配置为 PostgreSQL, MySQL 等。
 
-## 🚀 部署与运行 (Getting Started)
+## 🚀 快速开始 (Getting Started)
 
 请按照以下步骤在你的服务器或本地计算机上部署和运行本项目。
 
@@ -46,7 +49,7 @@ A lightweight, beautiful, and powerful self-hosted website health monitoring das
 
 1.  **克隆仓库**
     ```bash
-    git clone [你的项目Git仓库地址]
+    git clone https://github.com/YOUR_USERNAME/web-monitor.git
     cd web-monitor
     ```
 
@@ -63,44 +66,54 @@ A lightweight, beautiful, and powerful self-hosted website health monitoring das
         ```
 
 3.  **安装依赖**
-    首先，生成 `requirements.txt` 文件（如果项目中还没有的话），然后安装。
     ```bash
-    # (可选，如果 requirements.txt 不存在)
-    # pip freeze > requirements.txt 
-    
     pip install -r requirements.txt
     ```
 
 ### 3. 应用配置 (Configuration)
 
-所有配置项都在 `config.py` 文件中。
-
-1.  **复制示例配置 (如果需要)**
-    如果你有 `config.py.example`，请先复制它：
-    `cp config.py.example config.py`
+1.  **创建 `.flaskenv` 文件**
+    在项目根目录下创建一个名为 `.flaskenv` 的文件，用于设置环境变量。这比 `export` 命令更方便。
+    ```
+    FLASK_APP=run.py
+    # FLASK_DEBUG=1  # 在开发时可以取消此行注释
+    ```
 
 2.  **编辑 `config.py`**
-    *   **`SECRET_KEY`**: **（必须修改）** 这是 Flask 应用用于加密会话（Session）的密钥。请务必将其更改为一个长而随机的字符串。你可以使用 `python -c 'import os; print(os.urandom(24))'` 来生成。
-    *   **`WECHAT_WEBHOOK_URL`**: (可选) 填入你的企业微信群机器人的 Webhook URL 以启用通知功能。
+    *   **`SECRET_KEY`**: **（必须修改）** 这是 Flask 应用用于加密会话的密钥。请务必将其更改为一个长而随机的字符串。你可以使用以下命令生成：
+        ```bash
+        python -c 'import secrets; print(secrets.token_hex(16))'
+        ```
+    *   **`QYWECHAT_WEBHOOK_URL`**: (可选) 填入你的企业微信群机器人的 Webhook URL 以启用告警通知功能。
     *   **`MONITOR_INTERVAL_SECONDS`**: (可选) 健康检查的频率，单位为秒，默认为 60。
 
-### 4. 数据库初始化
+### 4. 数据库初始化与迁移 (Database Initialization & Migration)
 
-本项目包含一个自定义的 Flask 命令，用于初始化数据库并创建第一个管理员用户。
+本项目使用 **Flask-Migrate** 管理数据库结构。
 
-```bash
-source .venv/bin/activate
-export FLASK_APP=run.py
-flask init-db
-```
-执行此命令后，会：
-*   创建 `instance/monitor.db` 数据库文件。
-*   创建所有数据表。
-*   添加一个默认管理员账户：
+1.  **首次初始化 (仅需执行一次)**
+    此命令会创建 `migrations` 文件夹来存放迁移脚本。
+    ```bash
+    flask db init
+    ```
+
+2.  **生成并应用首次迁移**
+    此命令会根据 `models.py` 创建第一个版本的数据库结构，并应用它。
+    ```bash
+    flask db migrate -m "Initial migration"
+    flask db upgrade
+    ```
+
+3.  **填充初始数据**
+    运行自定义命令来创建默认管理员和监控站点。
+    ```bash
+    flask init-db
+    ```
+    执行后会创建一个默认管理员账户：
     *   **用户名**: `admin`
     *   **密码**: `changeme`
 
-**强烈建议首次登录后立即在后台修改默认密码！**
+    **强烈建议首次登录后立即在后台修改默认密码！**
 
 ### 5. 运行应用 (Running the Application)
 
@@ -109,77 +122,59 @@ flask init-db
 用于本地测试和开发。Flask 会启动一个内置的开发服务器。
 
 ```bash
-python run.py
+flask run --host=0.0.0.0 --port=8080
 ```
 应用将在 `http://127.0.0.1:8080` 上运行。
 
-#### 生产环境
+#### 生产环境 (Gunicorn + Nginx)
 
-**强烈建议**在生产环境中使用专业的 WSGI 服务器，如 Gunicorn 或 uWSGI，并使用 Nginx 作为反向代理。
+**强烈建议**在生产环境中使用专业的 WSGI 服务器（如 Gunicorn）和反向代理（如 Nginx）。
 
-**使用 Gunicorn 运行:**
-
-1.  首先，确保 Gunicorn 已安装：
-    ```bash
-    pip install gunicorn
-    ```
-
-2.  运行应用：
+1.  **使用 Gunicorn 运行**
     ```bash
     gunicorn -w 4 -b 0.0.0.0:8080 "app:create_app()"
     ```
-    *   `-w 4`: 启动 4 个工作进程 (可根据你的 CPU 核心数调整)。
+    *   `-w 4`: 启动 4 个工作进程 (通常设置为 `2 * CPU核心数 + 1`)。
     *   `-b 0.0.0.0:8080`: 绑定到所有网络接口的 8080 端口。
-    *   `"app:create_app()"`: 指向我们的应用工厂函数。
 
-现在，你可以配置 Nginx 将外部流量（例如来自 `yourdomain.com` 的请求）代理到 Gunicorn 正在监听的 `http://127.0.0.1:8080`。
+2.  **配置 Nginx 作为反向代理**
+    创建一个新的 Nginx 配置文件，例如 `/etc/nginx/sites-available/web-monitor`：
+    ```nginx
+    server {
+        listen 80;
+        server_name your_domain.com; # 替换为你的域名
 
+        location / {
+            proxy_pass http://127.0.0.1:8080;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+    ```
+    然后启用该站点并重启 Nginx：
+    ```bash
+    sudo ln -s /etc/nginx/sites-available/web-monitor /etc/nginx/sites-enabled
+    sudo nginx -t # 测试配置是否正确
+    sudo systemctl restart nginx
+    ```
 
----
+## 🗄️ 数据库维护 (Database Maintenance)
 
-### 生产环境 (使用 Systemd 和 Nginx)
+当你修改了 `app/models.py` 中的数据模型后（例如添加或删除字段），请遵循以下流程来平滑升级数据库，而**不会丢失任何数据**。
 
-为了保证应用在后台稳定运行并能开机自启，推荐使用 `Systemd` 来管理 Gunicorn 进程。
+1.  **生成迁移脚本**
+    ```bash
+    # -m "..." 是对本次变更的简短描述
+    flask db migrate -m "Add a new feature or fix a model"
+    ```
 
-**1. 创建 Systemd 服务文件**
-
-创建 `/etc/systemd/system/web-monitor.service` 文件，并填入以下内容 (请根据你的实际路径和用户名修改):
-
-```bash
-[Unit]
-Description=Gunicorn instance to serve Web Monitor
-After=network.target
-
-[Service]
-User=youruser
-Group=youruser
-WorkingDirectory=/home/youruser/web-monitor
-Environment="PATH=/home/youruser/web-monitor/.venv/bin"
-ExecStart=/home/youruser/web-monitor/.venv/bin/gunicorn --workers 3 --bind unix:web-monitor.sock -m 007 "app:create_app()"
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**2. 启动并启用服务**
-
-```bash
-# 重新加载 systemd 配置
-sudo systemctl daemon-reload
-
-# 立即启动服务
-sudo systemctl start web-monitor
-
-# 检查服务状态以确认运行正常
-sudo systemctl status web-monitor
-
-# 设置开机自启
-sudo systemctl enable web-monitor
-```
-
-**3. 配置 Nginx 作为反向代理**
-
+2.  **应用迁移**
+    ```bash
+    flask db upgrade
+    ```
+    你的数据库现在已经更新到最新结构了！
 
 ## 📜 开源协议 (License)
 
@@ -191,7 +186,15 @@ sudo systemctl enable web-monitor
 
 ## 🤝 贡献 (Contributing)
 
-欢迎提交 Pull Request。对于重大更改，请先开启一个 Issue 来讨论你想要改变的内容。
+我们非常欢迎各种形式的贡献！
+
+1.  Fork 本项目
+2.  创建你的功能分支 (`git checkout -b feature/AmazingFeature`)
+3.  提交你的更改 (`git commit -m 'Add some AmazingFeature'`)
+4.  推送到分支 (`git push origin feature/AmazingFeature`)
+5.  开启一个 Pull Request
+
+对于重大更改，请先开启一个 Issue 来讨论你想要改变的内容。
 
 ---
 *由 TIANHAO DEVOPS TOOLS 强力驱动*

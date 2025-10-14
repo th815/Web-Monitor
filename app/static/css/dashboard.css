@@ -252,6 +252,30 @@ cursor: pointer;
     word-wrap: break-word;
 }
 
+/* --- 自定义时间轴图表的样式 --- */
+.uptime-history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 15px;
+}
+.timeline-legend {
+    display: flex;
+    gap: 15px;
+    font-size: 14px;
+}
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.legend-color-box {
+    display: inline-block;
+    width: 15px;
+    height: 15px;
+    border-radius: 3px;
+}
 
 /* --- 页脚 --- */
 footer {

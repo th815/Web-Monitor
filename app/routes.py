@@ -183,7 +183,9 @@ def get_health_status():
 
 @main_bp.route('/api/history', methods=['GET'])
 def get_history():
-    """提供历史监控数据的 API (已升级为按时间分段聚合)"""
+    """
+    提供历史监控数据的 API (最终版 v2: 状态合并与数据聚合)
+    """
     selected_sites = request.args.getlist('sites')
     start_time_str = request.args.get('start_time')
     end_time_str = request.args.get('end_time')
@@ -195,75 +197,79 @@ def get_history():
     except (ValueError, TypeError):
         return jsonify({"error": "无效的时间格式或参数缺失"}), 400
     results = {}
-    # 动态计算分段数量
-    total_duration_seconds = (end_time_utc - start_time_utc).total_seconds()
-    # 获取数据采集间隔，并设置一个最小值，防止除以零
-    monitor_interval_seconds = max(current_app.config.get('MONITOR_INTERVAL_SECONDS', 60), 1)
-
-    # 动态计算分段数，目标是让每个分段的时长约等于数据采集间隔
-    # 同时设置一个最大分段数（比如200），防止在选择超长时间范围时分段过多
-    num_intervals = min(200, int(total_duration_seconds / monitor_interval_seconds))
-    # 如果计算出的分段数小于1（比如时间范围小于采集间隔），则至少为1
-    num_intervals = max(1, num_intervals)
+    monitor_interval = datetime.timedelta(seconds=current_app.config.get('MONITOR_INTERVAL_SECONDS', 60))
+    monitor_interval_threshold = datetime.timedelta(seconds=monitor_interval.total_seconds() * 1.5)
     for site in selected_sites:
-        # 1. 查询日志
         logs = db.session.query(HealthCheckLog).filter(
             HealthCheckLog.site_name == site,
             HealthCheckLog.timestamp.between(start_time_utc, end_time_utc)
         ).order_by(HealthCheckLog.timestamp.asc()).all()
-        # 2. 计算总体统计
+        timeline_data = []
+        def get_log_status(log):
+            if not log: return 'nodata'
+            return 'up' if log.status == '正常' else ('slow' if log.status == '访问过慢' else 'down')
+        def finalize_segment(segment_start_log, segment_logs, segment_end_time):
+            start_time_aware = segment_start_log.timestamp.replace(tzinfo=timezone.utc)
+            # 【核心修复 1】如果结束时间等于开始时间，则给它一个监控周期的宽度
+            if segment_end_time == segment_start_log.timestamp:
+                end_time_aware = (segment_end_time.replace(tzinfo=timezone.utc) + monitor_interval)
+            else:
+                end_time_aware = segment_end_time.replace(tzinfo=timezone.utc)
+            start_ts = int(start_time_aware.timestamp() * 1000)
+            end_ts = int(end_time_aware.timestamp() * 1000)
+
+            status = get_log_status(segment_start_log)
+            status_map = {'up': 1, 'slow': 2, 'down': 3}
+
+            duration = end_time_aware - start_time_aware
+            duration_str = str(duration).split('.')[0]
+
+            valid_logs = [l for l in segment_logs if l.response_time_seconds is not None]
+            avg_resp = sum(l.response_time_seconds for l in valid_logs) / len(valid_logs) if valid_logs else 0.0
+
+            details = f"状态: {status.upper()}<br>持续: {duration_str}<br>平均响应: {avg_resp:.3f}s"
+
+            return [start_ts, end_ts, status_map.get(status), details]
+        if not logs:
+            timeline_data.append([int(start_time_utc.timestamp() * 1000), int(end_time_utc.timestamp() * 1000), 0, "该时间段内无数据"])
+        else:
+            current_segment_start_log = logs[0]
+            current_segment_logs = [logs[0]]
+            if logs[0].timestamp.replace(tzinfo=timezone.utc) > start_time_utc:
+                timeline_data.append([int(start_time_utc.timestamp() * 1000), int(logs[0].timestamp.replace(tzinfo=timezone.utc).timestamp() * 1000), 0, "该时间段内无数据"])
+            for i in range(1, len(logs)):
+                prev_log = logs[i-1]
+                current_log = logs[i]
+
+                prev_log_time_aware = prev_log.timestamp.replace(tzinfo=timezone.utc)
+                current_log_time_aware = current_log.timestamp.replace(tzinfo=timezone.utc)
+                is_status_changed = get_log_status(current_log) != get_log_status(prev_log)
+                is_time_gap = (current_log_time_aware - prev_log_time_aware) > monitor_interval_threshold
+                if is_status_changed or is_time_gap:
+                    # 【核心修复 2】结束点应该是下一个log的开始，而不是上一个log的结束
+                    timeline_data.append(finalize_segment(current_segment_start_log, current_segment_logs, current_log.timestamp))
+
+                    if is_time_gap: # 这个逻辑现在可能不太需要了，但保留也无妨
+                        timeline_data.append([int(prev_log_time_aware.timestamp() * 1000), int(current_log_time_aware.timestamp() * 1000), 0, "数据中断"])
+
+                    current_segment_start_log = current_log
+                    current_segment_logs = [current_log]
+                else:
+                    current_segment_logs.append(current_log)
+
+            # 处理最后一个分段，让它延伸到查询结束
+            timeline_data.append(finalize_segment(current_segment_start_log, current_segment_logs, end_time_utc))
+        # --- 为其他图表准备数据 ---
         up_count = sum(1 for log in logs if log.status in ['正常', '访问过慢'])
         availability = (up_count / len(logs) * 100) if logs else 0
         valid_times = [log.response_time_seconds for log in logs if log.response_time_seconds is not None]
         avg_response_time = sum(valid_times) / len(valid_times) if valid_times else 0
-        # 3. 将日志分配到动态计算出的时间分段中
-        interval_duration = total_duration_seconds / num_intervals if total_duration_seconds > 0 else 0
-        intervals = [defaultdict(list) for _ in range(num_intervals)]
-
-        for log in logs:
-            log_timestamp_utc = log.timestamp.replace(tzinfo=timezone.utc)
-            time_since_start = (log_timestamp_utc - start_time_utc).total_seconds()
-
-            # 使用 floor 除法可以更稳健地处理索引，避免浮点数精度问题
-            index = min(int(time_since_start // interval_duration), num_intervals - 1) if interval_duration > 0 else 0
-            intervals[index]['logs'].append(log)
-        # 4. 处理每个分段，生成最终给前端的数据 (这部分逻辑不变)
-        uptime_intervals = []
-        for i, interval_data in enumerate(intervals):
-            interval_logs = interval_data['logs']
-            start_interval_utc = start_time_utc + datetime.timedelta(seconds=i * interval_duration)
-            end_interval_utc = start_interval_utc + datetime.timedelta(seconds=interval_duration)
-            local_tz = start_time_naive.tzinfo
-            start_display = start_interval_utc.astimezone(local_tz).strftime('%H:%M')
-            end_display = end_interval_utc.astimezone(local_tz).strftime('%H:%M, %m/%d')
-            if not interval_logs:
-                status = "nodata"
-                details = "无数据"
-            else:
-                if any(log.status == '无法访问' for log in interval_logs):
-                    status = "down"
-                    down_log = next((log for log in interval_logs if log.status == '无法访问'), None)
-                    details = "未知错误"
-                    if down_log:
-                        error_text = getattr(down_log, 'error_detail', '无详细信息')
-                        details = f"错误: {error_text or '无详细信息'}"
-                elif any(log.status == '访问过慢' for log in interval_logs):
-                    status = "slow"
-                    details = "响应过慢"
-                else:
-                    status = "up"
-                    details = "一切正常"
-
-            uptime_intervals.append({
-                "time_range": f"{start_display} - {end_display}",
-                "status": status,
-                "details": details
-            })
-
-        # 5. 组装最终给前端的 JSON (这部分逻辑不变)
         results[site] = {
-            "overall_stats": {"avg_response_time": avg_response_time, "availability": availability},
-            "uptime_intervals": uptime_intervals,
+            "timeline_data": timeline_data,
+            "overall_stats": {
+                "availability": availability,
+                "avg_response_time": avg_response_time
+            },
             "response_times": {
                 "timestamps": [to_gmt8(log.timestamp).strftime('%Y-%m-%d %H:%M') for log in logs],
                 "times": [log.response_time_seconds for log in logs]

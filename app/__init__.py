@@ -19,7 +19,7 @@ def create_app(config_object='config'):
 
     # 2. 初始化插件
     extensions.db.init_app(app)
-
+    extensions.migrate.init_app(app, extensions.db)
     # 3. 初始化 Flask-Login
     login_manager = LoginManager()
     login_manager.init_app(app)
@@ -61,13 +61,13 @@ def create_app(config_object='config'):
 
     extensions.admin.add_link(AuthenticatedMenuLink(name='安全退出', endpoint='admin.logout', category='用户操作', icon_type='fa', icon_value='fa-sign-out'))
 
-    # 5. 注册蓝图
+    # 6. 注册蓝图
     app.register_blueprint(main_bp)
 
-    # 6. 注册自定义命令行
+    # 7. 注册自定义命令行
     app.cli.add_command(init_db_command)
 
-    # 7. 配置和启动后台定时任务
+    # 8. 配置和启动后台定时任务
     if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         if not extensions.scheduler.running:
             extensions.scheduler.init_app(app)
@@ -87,13 +87,8 @@ def create_app(config_object='config'):
             )
             print("后台监控任务已启动...")
 
-    # 8. 在应用上下文中创建数据库表并执行首次检查
+    # 9. 确保数据库表存在
     with app.app_context():
         extensions.db.create_all()
-
-        from .services import site_statuses
-        if not site_statuses:
-            print("首次执行健康检查以填充初始数据...")
-            check_website_health()
 
     return app

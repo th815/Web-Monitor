@@ -1,3 +1,5 @@
+# web-monitor/app/services.py (最终修复版)
+
 import requests
 import json
 import time
@@ -16,21 +18,16 @@ status_lock = threading.Lock()
 FAILURE_CONFIRMATION_THRESHOLD = 3
 
 
-# --- 通知函数 ---
-def send_notification(site_name, url, current_status_key, previous_status, error_detail=None):
+# --- 通知函数 (保持不变) ---
+def send_notification(site_name, url, current_status_key, previous_status, error_detail=None, http_code=None):
     """
     发送企业微信通知的统一函数。
-
-    Args:
-        current_status_key (str): 'recovered', 'down', 'slow'
-        previous_status (str): 前一个状态的文本描述
     """
     webhook_url = current_app.config.get('QYWECHAT_WEBHOOK_URL')
     if not webhook_url or "YOUR_KEY_HERE" in webhook_url:
         print("企业微信 Webhook URL 未配置，跳过通知。")
         return
 
-    # 根据状态关键字生成通知内容
     if current_status_key == "recovered":
         title = "<font color=\"info\">✅ 网站恢复通知</font>"
         status_text = "已恢复正常"
@@ -39,16 +36,11 @@ def send_notification(site_name, url, current_status_key, previous_status, error
         title = "<font color=\"warning\">🔥 网站访问异常</font>"
         status_text = "无法访问"
         color = "warning"
-    elif current_status_key == "slow":
-        title = "<font color=\"comment\">⚠️ 网站访问过慢</font>"
-        status_text = "访问过慢"
-        color = "comment"
     else:
-        # 对于 "正常" -> "访问过慢" 这类非关键变更，不发送通知
         return
 
     content = (
-        f"# 网站健康状态变更通知\n\n"
+        f"## 网站健康状态变更通知\n"
         f"> **网站名称**: {site_name}\n"
         f"> **监控地址**: {url}\n"
         f"> **当前状态**: <font color=\"{color}\">{status_text}</font>\n"
@@ -56,9 +48,11 @@ def send_notification(site_name, url, current_status_key, previous_status, error
     )
 
     if error_detail:
-        # 清理和截断错误信息，使其更易读
         clean_error = str(error_detail).replace("'", "`").replace('"', '`')
-        content += f"\n> **错误详情**: `{clean_error[:200]}...`"
+        if http_code:
+            content += f"\n> **错误详情**: HTTP {http_code} - `{clean_error[:200]}`"
+        else:
+            content += f"\n> **错误详情**: `{clean_error[:200]}`"
 
     payload = {"msgtype": "markdown", "markdown": {"content": content}}
 
@@ -69,14 +63,10 @@ def send_notification(site_name, url, current_status_key, previous_status, error
         print(f"发送企业微信通知时发生错误: {e}")
 
 
-# --- 核心监控逻辑 ---
+# --- 核心监控逻辑 (彻底重构) ---
 def _core_check_logic():
-    """包含核心检查逻辑的内部函数，以避免代码重复。"""
+    """包含核心检查逻辑的内部函数。"""
     sites_to_monitor = MonitoredSite.query.filter_by(is_active=True).all()
-    slow_response_threshold = current_app.config.get('SLOW_RESPONSE_THRESHOLD_SECONDS', 5)
-    request_timeout = current_app.config.get('REQUEST_TIMEOUT_SECONDS', 10)
-    headers = {'User-Agent': 'WebMonitor/1.0'}
-
     if not sites_to_monitor:
         print("健康检查：数据库中没有活动的监控站点。")
         return
@@ -85,80 +75,101 @@ def _core_check_logic():
 
     for site in sites_to_monitor:
         site_name, url = site.name, site.url
-        response_time, error_detail, current_status = None, None, None
+
+        # 初始化本次检查的结果变量
+        current_status = "未知"
+        response_time = None
+        http_status_code = None
+        error_detail = None
 
         try:
-            # 1. 执行HTTP请求
             start_time = time.time()
-            response = requests.get(url, timeout=request_timeout, headers=headers)
+            response = requests.get(
+                url,
+                timeout=current_app.config.get('REQUEST_TIMEOUT', 10),
+                headers={'User-Agent': 'WebMonitor/1.0'}
+            )
             response_time = time.time() - start_time
+            http_status_code = response.status_code
 
-            # 2. 分析响应，判断成功状态
-            if response.status_code < 400:
-                current_status = "访问过慢" if response_time > slow_response_threshold else "正常"
+            # 【核心修复】使用 raise_for_status() 来自动处理 4xx 和 5xx 错误
+            # 这会将所有非 2xx 的响应码都抛出 HTTPError 异常
+            response.raise_for_status()
 
-                with status_lock:
-                    previous_data = site_statuses.get(site_name, {})
-                    # 如果是从“无法访问”的状态中恢复，则发送恢复通知
-                    if previous_data.get("status") == "无法访问" and previous_data.get("notification_sent"):
-                        send_notification(site_name, url, "recovered", previous_data.get("status"))
-
-                    # 更新状态，并将失败计数器清零
-                    site_statuses[site_name] = {
-                        "status": current_status,
-                        "response_time_seconds": round(response_time, 2),
-                        "last_checked": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        "failure_count": 0,
-                        "notification_sent": False # 恢复后重置告警标志
-
-                    }
+            # 如果代码能执行到这里，说明 status_code 是 2xx，请求成功
+            if response_time > current_app.config.get('SLOW_RESPONSE_THRESHOLD', 5):
+                current_status = '访问过慢'
             else:
-                # 对于非2xx/3xx的响应码，也视为失败
-                raise requests.exceptions.RequestException(f"HTTP 状态码: {response.status_code}")
+                current_status = '正常'
 
         except requests.exceptions.RequestException as e:
-            # 3. 处理所有失败情况（连接超时、HTTP错误等）
-            current_status = "无法访问"
-            error_detail = str(e)
+            # 这里会捕获所有 requests 相关的异常，包括连接超时、DNS错误、以及 raise_for_status() 抛出的 HTTPError
+            current_status = '无法访问'
+            # 尝试从异常中提取更具体的信息
+            if isinstance(e, requests.exceptions.HTTPError):
+                # 如果是 HTTP 错误，error_detail 就是状态码
+                error_detail = f"HTTP {http_status_code}"
+            elif isinstance(e, requests.exceptions.Timeout):
+                error_detail = "请求超时"
+            elif isinstance(e, requests.exceptions.ConnectionError):
+                error_detail = "连接错误"
+            else:
+                error_detail = "未知请求异常"
 
-            with status_lock:
-                previous_data = site_statuses.get(site_name, {})
-                # 累加失败次数
-                new_failure_count = previous_data.get("failure_count", 0) + 1
+        # --- 更新全局状态和处理告警 ---
+        with status_lock:
+            previous_data = site_statuses.get(site_name, {})
+            previous_status = previous_data.get("status", "未知")
 
-                # 失败次数达到阈值时，发送告警并设置标志位
-                notification_has_been_sent = previous_data.get("notification_sent", False)
-                if new_failure_count >= FAILURE_CONFIRMATION_THRESHOLD and not notification_has_been_sent:
-                    send_notification(site_name, url, "down", previous_data.get("status", "未知"), error_detail)
-                    notification_has_been_sent = True  # 标记已发送
-                # 更新状态和失败次数
-                site_statuses[site_name] = {
-                    "status": current_status,
-                    "response_time_seconds": None,
-                    "last_checked": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    "failure_count": new_failure_count,
-                    "notification_sent": notification_has_been_sent  # 保存更新后的标志位
-                }
+            # 检查状态是否真的发生了变化
+            if current_status != previous_status:
+                if current_status in ['正常', '访问过慢']:  # 如果是恢复或变为慢速
+                    # 只有从“无法访问”恢复时才发送恢复通知
+                    if previous_status == '无法访问' and previous_data.get("notification_sent"):
+                        send_notification(site_name, url, "recovered", previous_status)
 
-        # 4. 无论成功或失败，都记录日志
-        if current_status:
-            log_entry = HealthCheckLog(
-                site_name=site_name,
-                status=current_status,
-                response_time_seconds=round(response_time, 2) if response_time else None,
-                error_detail=error_detail
-            )
-            db.session.add(log_entry)
+                    # 更新状态，并将失败计数器和告警标志清零
+                    site_statuses[site_name] = {
+                        "status": current_status,
+                        "failure_count": 0,
+                        "notification_sent": False
+                    }
+                elif current_status == '无法访问':  # 如果是首次变为无法访问
+                    site_statuses[site_name] = {
+                        "status": current_status,
+                        "failure_count": 1,  # 失败计数从1开始
+                        "notification_sent": False
+                    }
+            elif current_status == '无法访问':  # 如果是连续无法访问
+                site_statuses[site_name]["failure_count"] += 1
 
-        if response_time is not None:
-            print(
-                f"  - {site_name}: {current_status} ({response_time:.2f}s), 失败计数: {site_statuses.get(site_name, {}).get('failure_count', 0)}")
-        else:
-            print(
-                f"  - {site_name}: {current_status}, 失败计数: {site_statuses.get(site_name, {}).get('failure_count', 0)}")
+            # 更新通用信息
+            site_statuses[site_name]["response_time_seconds"] = round(response_time, 2) if response_time else None
+            site_statuses[site_name]["last_checked"] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            # --- 独立的告警发送逻辑 ---
+            current_data = site_statuses[site_name]
+            if (current_data.get("status") == '无法访问' and
+                    current_data.get("failure_count") >= FAILURE_CONFIRMATION_THRESHOLD and
+                    not current_data.get("notification_sent")):
+                send_notification(site_name, url, "down", previous_status, error_detail, http_status_code)
+                site_statuses[site_name]["notification_sent"] = True
+
+        # --- 记录日志到数据库 ---
+        log_entry = HealthCheckLog(
+            site_name=site_name,
+            status=current_status,
+            response_time_seconds=round(response_time, 2) if response_time else None,
+            http_status_code=http_status_code,
+            error_detail=error_detail
+        )
+        db.session.add(log_entry)
         db.session.commit()
-        print("健康检查完成。")
 
+        print(
+            f"  - {site_name}: {current_status} (HTTP {http_status_code or 'N/A'}), 失败计数: {site_statuses.get(site_name, {}).get('failure_count', 0)}")
+
+    print("健康检查完成。")
 
 # --- 调度器入口函数 ---
 

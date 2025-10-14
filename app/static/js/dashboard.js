@@ -1,102 +1,123 @@
-// 使用 document.addEventListener 确保 DOM 完全加载后再执行脚本
+// web-monitor/app/static/js/dashboard.js (最终自定义系列版 - 已修复)
+
 document.addEventListener('DOMContentLoaded', () => {
+
     // --- 变量初始化 ---
+    const timelineChartContainer = document.getElementById('timeline-chart');
+    let timelineChart = echarts.init(timelineChartContainer);
     const uptimeChart = echarts.init(document.getElementById('uptime-chart'));
     const responseTimeChart = echarts.init(document.getElementById('response-time-chart'));
-    const uptimeHistoryContainer = document.getElementById('uptime-history-charts');
-    const tooltip = document.getElementById('uptime-tooltip');
-    // 直接从 window 对象获取已经解析好的数据，不再需要 JSON.parse
+
+
     const initialStatuses = window.INITIAL_STATUSES;
     const dataRetentionDays = window.DATA_RETENTION_DAYS;
     let currentParams = {};
     let flatpickrInstance;
-    // --- 核心功能函数 ---
+
+    const STATUS_COLORS = {
+        0: '#f0f0f0', 1: '#91cc75', 2: '#fac858', 3: '#ee6666'
+    };
+
+    // --- 【修复】重新添加回 toLocalISOString 函数 ---
     const toLocalISOString = dt =>
         `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}T${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
-    function showLoading() {
-        uptimeChart.showLoading();
-        responseTimeChart.showLoading();
-        uptimeHistoryContainer.innerHTML = '<p>加载中...</p>';
+
+
+    // --- 核心功能函数 ---
+
+    function renderItem(params, api) {
+        const categoryIndex = api.value(0);
+        const start = api.coord([api.value(1), categoryIndex]);
+        const end = api.coord([api.value(2), categoryIndex]);
+        const height = api.size([0, 1])[1] * 0.8;
+
+        const rectShape = echarts.graphic.clipRectByRect(
+            { x: start[0], y: start[1] - height / 2, width: end[0] - start[0], height: height },
+            { x: params.coordSys.x, y: params.coordSys.y, width: params.coordSys.width, height: params.coordSys.height }
+        );
+
+        return rectShape && { type: 'rect', shape: rectShape, style: { fill: STATUS_COLORS[api.value(3)] } };
     }
-    function hideLoading() {
-        uptimeChart.hideLoading();
-        responseTimeChart.hideLoading();
-    }
+
     function renderUptimeHistory(data) {
-        uptimeHistoryContainer.innerHTML = '';
         if (!data || Object.keys(data).length === 0) {
-            uptimeHistoryContainer.innerHTML = '<p>没有选中任何网站或当前时间范围无数据。</p>';
+            timelineChart.clear();
+            timelineChartContainer.innerHTML = '<p>没有选中任何网站或当前时间范围无数据。</p>';
             return;
         }
-        let content = '';
-        const { start_date, end_date } = currentParams;
-        for (const siteName in data) {
-            const siteData = data[siteName];
-            if (!siteData.uptime_intervals || siteData.uptime_intervals.length === 0) continue;
-            // 1. 生成所有小分段的 HTML
-            const segmentsHtml = siteData.uptime_intervals.map(interval => {
-                // 将数据附加到 data-* 属性，供悬浮窗使用
-                return `<div class="uptime-bar-segment bar-${interval.status}" 
-                             data-time-range="${interval.time_range}" 
-                             data-status="${interval.status}"
-                             data-details="${interval.details}"></div>`;
-            }).join('');
-            // 2. 组装每个网站的完整模块
-            content += `
-                <div class="site-uptime-wrapper">
-                    <div class="site-uptime-header">
-                        <div class="site-uptime-title">${siteName}</div>
-                        <div class="site-uptime-stats">
-                            <span>平均响应: <span class="stat-value">${siteData.overall_stats.avg_response_time.toFixed(2)}s</span></span>
-                            <span><span class="stat-value">${siteData.overall_stats.availability.toFixed(2)}%</span> 在线率</span>
-                        </div>
-                    </div>
-                    <div class="uptime-bar-container">${segmentsHtml}</div>
-                    <div class="uptime-timeline-labels">
-                        <span>${start_date}</span>
-                        <span>${end_date}</span>
-                    </div>
-                </div>`;
+
+        const siteNames = Object.keys(data);
+        const series = [];
+        const chartHeight = Math.max(150, siteNames.length * 40 + 80); // 动态高度，增加最小值
+        timelineChartContainer.style.height = `${chartHeight}px`;
+        if (timelineChart.isDisposed()) {
+            timelineChart = echarts.init(timelineChartContainer);
         }
-        uptimeHistoryContainer.innerHTML = content || '<p>当前时间范围无数据。</p>';
+        timelineChart.resize();
+
+        siteNames.forEach((siteName, index) => {
+            const siteData = data[siteName].timeline_data.map(item => [index, item[0], item[1], item[2], item[3]]);
+            series.push({
+                name: siteName, type: 'custom', renderItem: renderItem, itemStyle: { opacity: 0.8 },
+                encode: { x: [1, 2], y: 0 }, data: siteData
+            });
+        });
+
+        const option = {
+            tooltip: {
+                // 【核心修复】将 trigger 从 'axis' 改为 'item'
+                trigger: 'item',
+                axisPointer: {
+                    type: 'shadow'
+                },
+                formatter: function (params) {
+                    if (!params || params.seriesType !== 'custom') {
+                        return '';
+                    }
+
+                    const seriesName = params.seriesName;
+                    const details = params.value[4];
+
+                    // 【新增】从数据中获取起止时间，并格式化
+                    const startTime = new Date(params.value[1]);
+                    const endTime = new Date(params.value[2]);
+                    const timeFormat = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+                    const timeRangeStr = `${startTime.toLocaleTimeString('zh-CN', timeFormat)} - ${endTime.toLocaleTimeString('zh-CN', timeFormat)}`;
+                    return `<strong>${seriesName}</strong><br/>
+                            时间: ${timeRangeStr}<br/>
+                            ${details}`;
+                }
+            },
+
+            dataZoom: [
+                {
+                    type: 'slider', filterMode: 'weakFilter', showDataShadow: false,
+                    bottom: 0, height: 20, borderColor: 'transparent', backgroundColor: '#e2e2e2',
+                    handleIcon: 'path://M10.7,11.9H9.3c-4.9,0.3-8.8,4.4-8.8,9.4c0,5,3.9,9.1,8.8,9.4h1.3c4.9-0.3,8.8-4.4,8.8-9.4C19.5,16.3,15.6,12.2,10.7,11.9z M13.3,24.4H6.7V23h6.6V24.4z M13.3,22H6.7v-1.4h6.6V22z',
+                    handleSize: 20, handleStyle: { color: '#fff', shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.3)' }
+                },
+                { type: 'inside', filterMode: 'weakFilter' }
+            ],
+            grid: { top: 10, left: 100, right: 20, bottom: 40 },
+            xAxis: {
+                type: 'time',
+                min: new Date(currentParams.start_iso),
+                max: new Date(currentParams.end_iso),
+                axisLabel: {
+                    formatter: function (value) {
+                        return new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+                    }
+                }
+            },
+            yAxis: { type: 'category', data: siteNames, axisLabel: { interval: 0 } },
+            series: series
+        };
+        timelineChart.setOption(option, true);
     }
-    // 【修改】渲染对比图表的函数
+    // --- 【新增】恢复 renderComparisonCharts 函数 ---
     function renderComparisonCharts(data) {
         const uptimeCategories = [];
         const uptimeData = [];
-        for (const siteName in data) {
-            const siteData = data[siteName];
-            if (siteData.uptime_intervals.length > 0) {
-                uptimeCategories.push(siteName);
-                // 直接使用后端计算好的总体可用率
-                uptimeData.push(siteData.overall_stats.availability.toFixed(2));
-            }
-        }
-
-        // 可用率图表 (逻辑和之前一样)
-        if (uptimeCategories.length === 0) {
-            uptimeChart.setOption({ title: { text: '当前时间范围无可用率数据', left: 'center', top: 'center' } }, true);
-        } else {
-            uptimeChart.setOption({
-                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-                xAxis: { type: 'category', data: uptimeCategories },
-                yAxis: { type: 'value', max: 100, axisLabel: { formatter: '{value}%' } },
-                series: [{
-                    type: 'bar', barWidth: '40%', data: uptimeData,
-                    label: { show: true, position: 'top', formatter: '{c}%', color: '#333' },
-                    itemStyle: {
-                        color: function (params) {
-                            const value = parseFloat(params.value);
-                            if (value >= 99.9) return '#67C23A';
-                            if (value >= 99) return '#91cc75';
-                            if (value >= 95) return '#E6A23C';
-                            return '#F56C6C';
-                        }
-                    }
-                }]
-            }, true);
-        }
-        // 响应时间图表 (逻辑和之前一样)
         const responseTimeLegends = [];
         const responseTimeSeries = [];
         let allTimestamps = new Set();
@@ -106,38 +127,66 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
         const sortedTimestamps = Array.from(allTimestamps).sort();
-        Object.keys(data).forEach(siteName => {
-             if (data[siteName].response_times.timestamps.length > 0) {
+        for (const siteName in data) {
+            const siteData = data[siteName];
+            // 可用率图表数据
+            if (siteData.overall_stats) {
+                uptimeCategories.push(siteName);
+                uptimeData.push(siteData.overall_stats.availability.toFixed(2));
+            }
+            // 响应时间图表数据
+            if (siteData.response_times.timestamps.length > 0) {
                 responseTimeLegends.push(siteName);
-                const siteData = data[siteName].response_times;
+                const rtData = siteData.response_times;
                 const seriesData = sortedTimestamps.map(ts => {
-                    const index = siteData.timestamps.indexOf(ts);
-                    return index > -1 ? siteData.times[index] : null;
+                    const index = rtData.timestamps.indexOf(ts);
+                    return index > -1 ? rtData.times[index] : null;
                 });
                 responseTimeSeries.push({ name: siteName, type: 'line', smooth: true, data: seriesData, connectNulls: true });
             }
-        });
-        if (responseTimeLegends.length === 0) {
-             responseTimeChart.setOption({ title: { text: '当前时间范围无响应时间数据', left: 'center', top: 'center' } }, true);
-        } else {
-             responseTimeChart.setOption({
-                title: { text: '' }, tooltip: { trigger: 'axis' }, legend: { data: responseTimeLegends, top: 10 },
-                grid: { top: 60, left: 50, right: 50, bottom: 60 }, xAxis: { type: 'category', boundaryGap: false, data: sortedTimestamps },
-                yAxis: { type: 'value', name: '响应时间 (秒)' }, dataZoom: [{ type: 'inside' }, { type: 'slider' }], series: responseTimeSeries
-             }, true);
         }
-    }
 
+        // 渲染可用率图表 (代码和之前一样)
+        uptimeChart.setOption({
+            tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+            xAxis: { type: 'category', data: uptimeCategories },
+            yAxis: { type: 'value', max: 100, axisLabel: { formatter: '{value}%' } },
+            series: [{
+                type: 'bar', barWidth: '40%', data: uptimeData,
+                label: { show: true, position: 'top', formatter: '{c}%', color: '#333' },
+                itemStyle: {
+                    color: function (params) {
+                        const value = parseFloat(params.value);
+                        if (value >= 99.9) return '#67C23A';
+                        if (value >= 99) return '#91cc75';
+                        if (value >= 95) return '#E6A23C';
+                        return '#F56C6C';
+                    }
+                }
+            }]
+        }, true);
+        // 渲染响应时间图表 (代码和之前一样)
+        responseTimeChart.setOption({
+            tooltip: { trigger: 'axis' }, legend: { data: responseTimeLegends, top: 10 },
+            grid: { top: 60, left: 50, right: 50, bottom: 60 },
+            xAxis: { type: 'category', boundaryGap: false, data: sortedTimestamps },
+            yAxis: { type: 'value', name: '响应时间 (秒)' },
+            dataZoom: [{ type: 'inside' }, { type: 'slider' }],
+            series: responseTimeSeries
+        }, true);
+    }
     async function updateDashboard() {
         const selectedSites = Array.from(document.querySelectorAll('#site-selector input:checked')).map(el => el.value);
-
         if (selectedSites.length === 0) {
-            uptimeHistoryContainer.innerHTML = '<p>请至少选择一个网站。</p>';
-            uptimeChart.setOption({ title: { text: '请选择网站', left: 'center', top: 'center' } }, true);
-            responseTimeChart.setOption({ title: { text: '请选择网站', left: 'center', top: 'center' } }, true);
+            if (timelineChart && !timelineChart.isDisposed()) timelineChart.clear();
+            if (uptimeChart && !uptimeChart.isDisposed()) uptimeChart.clear();
+            if (responseTimeChart && !responseTimeChart.isDisposed()) responseTimeChart.clear();
             return;
         }
-        showLoading();
+
+        // 简化 loading
+        if (timelineChart && !timelineChart.isDisposed()) timelineChart.showLoading();
+
         const siteParams = selectedSites.map(s => `sites=${encodeURIComponent(s)}`).join('&');
         const timeParams = `start_time=${currentParams.start_iso}&end_time=${currentParams.end_iso}`;
 
@@ -145,47 +194,18 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(`/api/history?${siteParams}&${timeParams}`);
             if (!response.ok) throw new Error(`API 请求失败: ${response.status}`);
             const data = await response.json();
-            // 现在这两个函数都会使用新的数据结构
+
+            // 【修改】同时调用两个渲染函数
             renderUptimeHistory(data);
             renderComparisonCharts(data);
+
         } catch (error) {
-            uptimeHistoryContainer.innerHTML = `<p style="color:red;">加载数据失败: ${error.message}</p>`;
             console.error(error);
         } finally {
-            hideLoading();
+            if (timelineChart && !timelineChart.isDisposed()) timelineChart.hideLoading();
         }
     }
-    // 悬浮窗事件监听函数
-    function setupTooltipEvents() {
-        // 使用事件委托，将监听器绑定在外层容器上，提高性能
-        uptimeHistoryContainer.addEventListener('mouseover', function(e) {
-            // 只在悬浮到 .uptime-bar-segment 元素上时触发
-            const segment = e.target.closest('.uptime-bar-segment');
-            if (segment) {
-                const timeRange = segment.dataset.timeRange;
-                const status = segment.dataset.status;
-                const details = segment.dataset.details;
 
-                // 更新内容并显示
-                tooltip.innerHTML = `<strong>${timeRange}</strong><br>状态: ${status}<br>${details}`;
-                tooltip.style.display = 'block';
-            }
-        });
-        // 核心修改：使用 mousemove 事件来实时更新位置
-        uptimeHistoryContainer.addEventListener('mousemove', function(e) {
-            // 只有当悬浮窗是可见状态时，才更新位置
-            if (tooltip.style.display === 'block') {
-                // pageX 和 pageY 提供了鼠标相对于整个文档的坐标
-                // +15 的偏移量是为了避免鼠标指针直接覆盖在悬浮窗上，导致闪烁
-                tooltip.style.left = e.clientX + 15 + 'px';
-                tooltip.style.top = e.clientY + 15 + 'px';
-            }
-        });
-        // 当鼠标离开整个历史记录容器时，隐藏悬浮窗
-        uptimeHistoryContainer.addEventListener('mouseleave', function(e) {
-            tooltip.style.display = 'none';
-        });
-    }
     async function updateStatusWall(initialData = null) {
         const data = initialData || await (await fetch('/health')).json();
         const wall = document.getElementById('status-wall');
@@ -204,28 +224,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>`;
         }).join('');
     }
+
     function setAndTriggerUpdate(startDate, endDate) {
-        const formatDate = (dt) => `${dt.getFullYear()}/${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}`;
         currentParams = {
             start_iso: toLocalISOString(startDate),
-            end_iso: toLocalISOString(endDate),
-            start_date: formatDate(startDate),
-            end_date: formatDate(endDate)
+            end_iso: toLocalISOString(endDate)
         };
         updateDashboard();
     }
-    // --- 事件监听器设置 ---
+
     function initializeControls() {
-        // Flatpickr (日期选择器)
         const minDate = new Date();
         minDate.setDate(minDate.getDate() - dataRetentionDays);
         flatpickrInstance = flatpickr("#custom-time-range", {
-            mode: "range",
-            dateFormat: "Y-m-d H:i",
-            enableTime: true,
-            time_24hr: true,
-            minDate: minDate,
-            maxDate: "today",
+            mode: "range", dateFormat: "Y-m-d H:i", enableTime: true, time_24hr: true,
+            minDate: minDate, maxDate: "today",
             onChange: (selectedDates) => {
                 if (selectedDates.length === 2) {
                     document.querySelector('#time-range-selector .active')?.classList.remove('active');
@@ -233,7 +246,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         });
-        // 时间范围按钮
+
         document.getElementById('time-range-selector').addEventListener('click', (e) => {
             if (e.target.tagName !== 'BUTTON') return;
             const range = e.target.dataset.range;
@@ -244,12 +257,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (unit === 'h') start.setHours(start.getHours() - num);
             if (unit === 'd') start.setDate(start.getDate() - num);
             if (unit === 'm') start.setMonth(start.getMonth() - num);
+
             document.querySelector('#time-range-selector .active')?.classList.remove('active');
             e.target.classList.add('active');
             flatpickrInstance.clear();
             setAndTriggerUpdate(start, end);
         });
-        // 网站选择器
+
         document.getElementById('site-selector').addEventListener('change', updateDashboard);
         document.getElementById('select-all').addEventListener('click', () => {
             document.querySelectorAll('#site-selector input').forEach(el => el.checked = true);
@@ -260,15 +274,10 @@ document.addEventListener('DOMContentLoaded', () => {
             updateDashboard();
         });
     }
-    // --- 初始加载 ---
 
+    // --- 初始加载 ---
     initializeControls();
-    // 【新增】调用此函数来激活悬浮窗
-    setupTooltipEvents();
-    // 首次加载时，触发默认激活的时间按钮
     document.querySelector('#time-range-selector button.active').click();
-    // 使用传入的初始数据首次渲染状态墙
     updateStatusWall(initialStatuses);
-    // 设置定时更新状态墙
     setInterval(() => updateStatusWall(), 15000);
 });
