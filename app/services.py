@@ -100,7 +100,7 @@ def _core_check_logic():
                 with status_lock:
                     previous_data = site_statuses.get(site_name, {})
                     # 如果是从“无法访问”的状态中恢复，则发送恢复通知
-                    if previous_data.get("status") == "无法访问":
+                    if previous_data.get("status") == "无法访问" and previous_data.get("notification_sent"):
                         send_notification(site_name, url, "recovered", previous_data.get("status"))
 
                     # 更新状态，并将失败计数器清零
@@ -108,7 +108,9 @@ def _core_check_logic():
                         "status": current_status,
                         "response_time_seconds": round(response_time, 2),
                         "last_checked": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        "failure_count": 0  # 成功后清零
+                        "failure_count": 0,
+                        "notification_sent": False # 恢复后重置告警标志
+
                     }
             else:
                 # 对于非2xx/3xx的响应码，也视为失败
@@ -124,17 +126,18 @@ def _core_check_logic():
                 # 累加失败次数
                 new_failure_count = previous_data.get("failure_count", 0) + 1
 
-                # 只有当失败次数达到阈值时，才发送告警
-                # 并且只在第一次达到阈值时发送，避免重复告警
-                if new_failure_count == FAILURE_CONFIRMATION_THRESHOLD:
+                # 失败次数达到阈值时，发送告警并设置标志位
+                notification_has_been_sent = previous_data.get("notification_sent", False)
+                if new_failure_count >= FAILURE_CONFIRMATION_THRESHOLD and not notification_has_been_sent:
                     send_notification(site_name, url, "down", previous_data.get("status", "未知"), error_detail)
-
+                    notification_has_been_sent = True  # 标记已发送
                 # 更新状态和失败次数
                 site_statuses[site_name] = {
                     "status": current_status,
                     "response_time_seconds": None,
                     "last_checked": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    "failure_count": new_failure_count
+                    "failure_count": new_failure_count,
+                    "notification_sent": notification_has_been_sent  # 保存更新后的标志位
                 }
 
         # 4. 无论成功或失败，都记录日志
@@ -143,18 +146,18 @@ def _core_check_logic():
                 site_name=site_name,
                 status=current_status,
                 response_time_seconds=round(response_time, 2) if response_time else None,
-                error_detail = error_detail
+                error_detail=error_detail
             )
             db.session.add(log_entry)
 
-        # 打印本次检查结果
         if response_time is not None:
-            print(f"  - {site_name}: {current_status} ({response_time:.2f}s)")
+            print(
+                f"  - {site_name}: {current_status} ({response_time:.2f}s), 失败计数: {site_statuses.get(site_name, {}).get('failure_count', 0)}")
         else:
-            print(f"  - {site_name}: {current_status}")
-
-    db.session.commit()
-    print("健康检查完成。")
+            print(
+                f"  - {site_name}: {current_status}, 失败计数: {site_statuses.get(site_name, {}).get('failure_count', 0)}")
+        db.session.commit()
+        print("健康检查完成。")
 
 
 # --- 调度器入口函数 ---

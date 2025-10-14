@@ -205,11 +205,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }).join('');
     }
     function setAndTriggerUpdate(startDate, endDate) {
+        const formatDate = (dt) => `${dt.getFullYear()}/${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}`;
         currentParams = {
             start_iso: toLocalISOString(startDate),
             end_iso: toLocalISOString(endDate),
-            start_date: startDate.toLocaleDateString(),
-            end_date: endDate.toLocaleDateString()
+            start_date: formatDate(startDate),
+            end_date: formatDate(endDate)
         };
         updateDashboard();
     }

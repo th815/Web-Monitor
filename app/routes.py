@@ -13,6 +13,23 @@ from .models import HealthCheckLog, User, MonitoredSite
 from .services import site_statuses, status_lock
 from .forms import LoginForm, MonitoredSiteForm, ChangePasswordForm
 
+# --- 【新增】时区转换和格式化帮助函数 ---
+def to_gmt8(utc_dt):
+    """将 UTC datetime 对象转换为 GMT+8 时区的 datetime 对象"""
+    if utc_dt is None:
+        return None
+    # 创建一个 UTC+8 的时区对象
+    gmt8_tz = timezone(datetime.timedelta(hours=8))
+    return utc_dt.replace(tzinfo=timezone.utc).astimezone(gmt8_tz)
+
+
+def format_datetime_gmt8(view, context, model, name):
+    """Flask-Admin 字段格式化函数，将 UTC 时间转为 GMT+8 字符串"""
+    utc_dt = getattr(model, name)
+    gmt8_dt = to_gmt8(utc_dt)
+    return gmt8_dt.strftime('%Y-%m-%d %H:%M:%S') if gmt8_dt else ''
+
+
 # --- 安全后台的核心 ---
 # 创建一个自定义的后台主页视图，要求登录
 class MyAdminIndexView(AdminIndexView):
@@ -131,8 +148,13 @@ class HealthCheckLogView(SecureModelView):
     can_edit = False
     can_delete = True
     page_size = 50
+    column_formatters = {
+        'timestamp': format_datetime_gmt8
+    }
+    # 【可选但推荐】让后台日志按时间倒序排列，最新的在最前面
+    column_default_sort = ('timestamp', True)
 
-# 只在认证后才显示的链接类
+    # 只在认证后才显示的链接类
 class AuthenticatedMenuLink(MenuLink):
     def is_accessible(self):
         return current_user.is_authenticated
@@ -174,6 +196,7 @@ def get_history():
         return jsonify({"error": "无效的时间格式或参数缺失"}), 400
     results = {}
     NUM_INTERVALS = 90  # 将整个时间范围切分成90个分段
+    EPSILON = 1e-9
     for site in selected_sites:
         # 1. 一次性查询所有范围内的日志
         logs = db.session.query(HealthCheckLog).filter(
@@ -194,7 +217,7 @@ def get_history():
         for log in logs:
             log_timestamp_utc = log.timestamp.replace(tzinfo=timezone.utc)
             time_since_start = (log_timestamp_utc - start_time_utc).total_seconds()
-            index = min(int(time_since_start / interval_duration), NUM_INTERVALS - 1)
+            index = min(int((time_since_start / interval_duration) + EPSILON), NUM_INTERVALS - 1) if interval_duration > 0 else 0
             intervals[index]['logs'].append(log)
         # 4. 处理每个分段，生成最终给前端的数据
         uptime_intervals = []
@@ -239,7 +262,7 @@ def get_history():
             "uptime_intervals": uptime_intervals,
             # ECharts 折线图仍然需要原始的响应时间数据
             "response_times": {
-                "timestamps": [log.timestamp.strftime('%Y-%m-%d %H:%M') for log in logs],
+                "timestamps": [to_gmt8(log.timestamp).strftime('%Y-%m-%d %H:%M') for log in logs],
                 "times": [log.response_time_seconds for log in logs]
             }
         }
