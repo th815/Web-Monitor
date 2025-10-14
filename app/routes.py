@@ -195,37 +195,44 @@ def get_history():
     except (ValueError, TypeError):
         return jsonify({"error": "无效的时间格式或参数缺失"}), 400
     results = {}
-    NUM_INTERVALS = 90  # 将整个时间范围切分成90个分段
-    EPSILON = 1e-9
+    # 动态计算分段数量
+    total_duration_seconds = (end_time_utc - start_time_utc).total_seconds()
+    # 获取数据采集间隔，并设置一个最小值，防止除以零
+    monitor_interval_seconds = max(current_app.config.get('MONITOR_INTERVAL_SECONDS', 60), 1)
+
+    # 动态计算分段数，目标是让每个分段的时长约等于数据采集间隔
+    # 同时设置一个最大分段数（比如200），防止在选择超长时间范围时分段过多
+    num_intervals = min(200, int(total_duration_seconds / monitor_interval_seconds))
+    # 如果计算出的分段数小于1（比如时间范围小于采集间隔），则至少为1
+    num_intervals = max(1, num_intervals)
     for site in selected_sites:
-        # 1. 一次性查询所有范围内的日志
+        # 1. 查询日志
         logs = db.session.query(HealthCheckLog).filter(
             HealthCheckLog.site_name == site,
             HealthCheckLog.timestamp.between(start_time_utc, end_time_utc)
         ).order_by(HealthCheckLog.timestamp.asc()).all()
-        # 2. 计算总体统计数据 (用于图表和右上角显示)
+        # 2. 计算总体统计
         up_count = sum(1 for log in logs if log.status in ['正常', '访问过慢'])
         availability = (up_count / len(logs) * 100) if logs else 0
         valid_times = [log.response_time_seconds for log in logs if log.response_time_seconds is not None]
         avg_response_time = sum(valid_times) / len(valid_times) if valid_times else 0
-        # 3. 【核心逻辑】将日志分配到时间分段中
-        total_duration = (end_time_utc - start_time_utc).total_seconds()
-        interval_duration = total_duration / NUM_INTERVALS if total_duration > 0 else 0
-
-        intervals = [defaultdict(list) for _ in range(NUM_INTERVALS)]
+        # 3. 将日志分配到动态计算出的时间分段中
+        interval_duration = total_duration_seconds / num_intervals if total_duration_seconds > 0 else 0
+        intervals = [defaultdict(list) for _ in range(num_intervals)]
 
         for log in logs:
             log_timestamp_utc = log.timestamp.replace(tzinfo=timezone.utc)
             time_since_start = (log_timestamp_utc - start_time_utc).total_seconds()
-            index = min(int((time_since_start / interval_duration) + EPSILON), NUM_INTERVALS - 1) if interval_duration > 0 else 0
+
+            # 使用 floor 除法可以更稳健地处理索引，避免浮点数精度问题
+            index = min(int(time_since_start // interval_duration), num_intervals - 1) if interval_duration > 0 else 0
             intervals[index]['logs'].append(log)
-        # 4. 处理每个分段，生成最终给前端的数据
+        # 4. 处理每个分段，生成最终给前端的数据 (这部分逻辑不变)
         uptime_intervals = []
         for i, interval_data in enumerate(intervals):
             interval_logs = interval_data['logs']
             start_interval_utc = start_time_utc + datetime.timedelta(seconds=i * interval_duration)
             end_interval_utc = start_interval_utc + datetime.timedelta(seconds=interval_duration)
-            # 将UTC时间转回用户的本地时区以供显示
             local_tz = start_time_naive.tzinfo
             start_display = start_interval_utc.astimezone(local_tz).strftime('%H:%M')
             end_display = end_interval_utc.astimezone(local_tz).strftime('%H:%M, %m/%d')
@@ -235,7 +242,6 @@ def get_history():
             else:
                 if any(log.status == '无法访问' for log in interval_logs):
                     status = "down"
-                    # 提取该时段内的错误信息
                     down_log = next((log for log in interval_logs if log.status == '无法访问'), None)
                     details = "未知错误"
                     if down_log:
@@ -253,14 +259,11 @@ def get_history():
                 "status": status,
                 "details": details
             })
-        # 5. 组装最终给前端的 JSON
+
+        # 5. 组装最终给前端的 JSON (这部分逻辑不变)
         results[site] = {
-            "overall_stats": {
-                "avg_response_time": avg_response_time,
-                "availability": availability
-            },
+            "overall_stats": {"avg_response_time": avg_response_time, "availability": availability},
             "uptime_intervals": uptime_intervals,
-            # ECharts 折线图仍然需要原始的响应时间数据
             "response_times": {
                 "timestamps": [to_gmt8(log.timestamp).strftime('%Y-%m-%d %H:%M') for log in logs],
                 "times": [log.response_time_seconds for log in logs]
