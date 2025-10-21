@@ -51,10 +51,32 @@ def send_notification(site_name, url, current_status_key, previous_status, error
 
     payload = {"msgtype": "markdown", "markdown": {"content": content}}
     try:
-        requests.post(webhook_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'}, timeout=10)
-        print(f"成功发送企业微信通知: {site_name} 状态变更为 {status_text}")
+        print(f"[通知] 准备发送企业微信通知: {site_name} - {status_text} -> 上次状态: {previous_status} | URL: {url}")
+        resp = requests.post(
+            webhook_url,
+            data=json.dumps(payload),
+            headers={'Content-Type': 'application/json'},
+            timeout=10
+        )
+        ok = False
+        err_detail_msg = ""
+        if resp.status_code == 200:
+            try:
+                res_json = resp.json()
+            except ValueError:
+                res_json = None
+            if isinstance(res_json, dict) and res_json.get("errcode") == 0:
+                ok = True
+            else:
+                err_detail_msg = f"非零返回: {res_json}"
+        else:
+            err_detail_msg = f"HTTP {resp.status_code}, body: {resp.text[:200]}"
+        if ok:
+            print(f"[通知] 企业微信通知发送成功: {site_name} 状态变更为 {status_text}")
+        else:
+            print(f"[通知] 企业微信通知发送失败: {site_name} 状态变更为 {status_text}，原因: {err_detail_msg}")
     except Exception as e:
-        print(f"发送企业微信通知时发生错误: {e}")
+        print(f"[通知] 发送企业微信通知时发生异常: {e}")
 
 
 # --- 内部工具函数 ---
@@ -185,12 +207,14 @@ def _core_check_logic():
             # 触发宕机告警（满足 连续失败 或 窗口失败 比例）且尚未告警
             if is_down and not notification_sent:
                 if failure_count >= fail_consecutive or fails_in_window >= window_threshold:
+                    print(f"[告警触发] 宕机: {site_name} 当前状态={current_status}, 上次状态={prev_status}, 连续失败={failure_count}, 窗口失败={fails_in_window}/{len(history)}, HTTP={http_status_code or 'N/A'}, 错误={error_detail or 'N/A'}")
                     send_notification(site_name, url, "down", prev_status, error_detail, http_status_code)
                     site_statuses[site_name]["notification_sent"] = True
 
             # 触发恢复通知（需要足够的连续成功，避免抖动）
             if (not is_down) and notification_sent:
                 if success_count >= recovery_consecutive:
+                    print(f"[告警触发] 恢复: {site_name} 当前状态={current_status}, 上次状态=无法访问, 连续成功={success_count}")
                     # 恢复的“上次状态”统一显示为 "无法访问"，更符合语义
                     send_notification(site_name, url, "recovered", "无法访问")
                     site_statuses[site_name]["notification_sent"] = False
