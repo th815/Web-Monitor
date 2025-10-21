@@ -85,7 +85,7 @@ A lightweight, beautiful, and powerful self-hosted website health monitoring das
         python -c 'import secrets; print(secrets.token_hex(16))'
         ```
     *   **`QYWECHAT_WEBHOOK_URL`**: (可选) 填入你的企业微信群机器人的 Webhook URL 以启用告警通知功能。
-    *   **`MONITOR_INTERVAL_SECONDS`**: (可选) 健康检查的频率，单位为秒，默认为 60。
+    *   **`MONITOR_INTERVAL_SECONDS`**: (可选) 健康检查频率（秒）。可通过环境变量 MONITOR_INTERVAL_SECONDS 配置，默认 20 秒。
 
 ### 4. 数据库初始化与迁移 (Database Initialization & Migration)
 
