@@ -14,7 +14,8 @@ SECRET_KEY = 'a-super-secret-key-that-you-should-change'
 QYWECHAT_WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY_HERE"  # 记得替换成你的Key
 
 # 定时检查与性能阈值
-MONITOR_INTERVAL_SECONDS = 60
+# 健康检查频率（秒）。可通过环境变量 MONITOR_INTERVAL_SECONDS 覆盖，默认 20 秒以更快触发告警。
+MONITOR_INTERVAL_SECONDS = int(os.getenv('MONITOR_INTERVAL_SECONDS', '20'))
 REQUEST_TIMEOUT = 10  # 单次请求超时（秒）
 SLOW_RESPONSE_THRESHOLD_SECONDS = 3.0  # 响应超过该阈值判定为“访问过慢”
 
