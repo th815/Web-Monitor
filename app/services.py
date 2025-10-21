@@ -14,11 +14,17 @@ status_lock = threading.Lock()
 
 
 # --- 通知函数 ---
-def send_notification(site_name, url, current_status_key, previous_status, error_detail=None, http_code=None):
+def send_notification(site_name, url, current_status_key, previous_status, error_detail=None, http_code=None,
+                     down_since=None, failure_count=None, fails_in_window=None, window_size=None,
+                     recovery_success_count=None):
     """
     发送企业微信通知的统一函数。
     current_status_key: "down" | "recovered"
     previous_status: 通知中用于显示的上次状态（字符串）
+    可选参数用于丰富通知内容：
+      - down_since: 故障开始的 UTC datetime
+      - failure_count/fails_in_window/window_size: 检查统计
+      - recovery_success_count: 恢复确认所需的连续成功次数
     """
     webhook_url = current_app.config.get('QYWECHAT_WEBHOOK_URL')
     if not webhook_url or "YOUR_KEY_HERE" in webhook_url:
@@ -34,6 +40,35 @@ def send_notification(site_name, url, current_status_key, previous_status, error
     else:
         return
 
+    def _format_gmt8(dt):
+        if not dt:
+            return None
+        try:
+            gmt8_tz = datetime.timezone(datetime.timedelta(hours=8))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            return dt.astimezone(gmt8_tz).strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            return None
+
+    def _format_duration(delta):
+        try:
+            total = int(delta.total_seconds())
+        except Exception:
+            return None
+        days, rem = divmod(total, 86400)
+        hours, rem = divmod(rem, 3600)
+        minutes, secs = divmod(rem, 60)
+        parts = []
+        if days:
+            parts.append(f"{days}天")
+        if hours:
+            parts.append(f"{hours}小时")
+        if minutes:
+            parts.append(f"{minutes}分钟")
+        parts.append(f"{secs}秒")
+        return ''.join(parts)
+
     content = (
         f"## 网站健康状态变更通知\n"
         f"> **网站名称**: {site_name}\n"
@@ -41,6 +76,30 @@ def send_notification(site_name, url, current_status_key, previous_status, error
         f"> **当前状态**: <font color=\"{color}\">{status_text}</font>\n"
         f"> **上次状态**: {previous_status}"
     )
+
+    # 故障时间与检查统计
+    if current_status_key == 'down':
+        if down_since:
+            down_since_gmt8 = _format_gmt8(down_since)
+            if down_since_gmt8:
+                content += f"\n> **故障开始**: {down_since_gmt8} (GMT+8)"
+        if failure_count is not None and fails_in_window is not None and window_size is not None:
+            content += f"\n> **检查统计**: 连续失败 {failure_count} 次 | 窗口失败 {fails_in_window}/{window_size}"
+
+    if current_status_key == 'recovered':
+        now_utc = datetime.datetime.utcnow()
+        if down_since:
+            start_gmt8 = _format_gmt8(down_since)
+            end_gmt8 = _format_gmt8(now_utc)
+            duration = _format_duration(now_utc - down_since)
+            if start_gmt8:
+                content += f"\n> **故障开始**: {start_gmt8} (GMT+8)"
+            if end_gmt8:
+                content += f"\n> **恢复时间**: {end_gmt8} (GMT+8)"
+            if duration:
+                content += f"\n> **故障时长**: {duration}"
+        if recovery_success_count is not None:
+            content += f"\n> **恢复确认**: 连续成功 {recovery_success_count} 次"
 
     # 构建更详细的错误原因，优先显示 HTTP Code
     if error_detail:
@@ -193,6 +252,18 @@ def _core_check_logic():
                 success_count = success_count + 1 if prev_status in ['正常', '访问过慢'] else 1
                 failure_count = 0
 
+            # 故障开始时间跟踪（UTC）
+            down_since_dt = None
+            if is_down:
+                prev_down_since_str = prev.get("down_since")
+                if prev_status == '无法访问' and prev_down_since_str:
+                    try:
+                        down_since_dt = datetime.datetime.strptime(prev_down_since_str, '%Y-%m-%d %H:%M:%S')
+                    except Exception:
+                        down_since_dt = datetime.datetime.utcnow()
+                else:
+                    down_since_dt = datetime.datetime.utcnow()
+
             # 保存最新状态
             site_statuses[site_name] = {
                 "status": current_status,
@@ -201,14 +272,27 @@ def _core_check_logic():
                 "history": history,
                 "notification_sent": notification_sent,
                 "response_time_seconds": round(response_time, 2) if response_time else None,
-                "last_checked": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                "last_checked": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "down_since": down_since_dt.strftime('%Y-%m-%d %H:%M:%S') if down_since_dt else None
             }
 
             # 触发宕机告警（满足 连续失败 或 窗口失败 比例）且尚未告警
             if is_down and not notification_sent:
                 if failure_count >= fail_consecutive or fails_in_window >= window_threshold:
                     print(f"[告警触发] 宕机: {site_name} 当前状态={current_status}, 上次状态={prev_status}, 连续失败={failure_count}, 窗口失败={fails_in_window}/{len(history)}, HTTP={http_status_code or 'N/A'}, 错误={error_detail or 'N/A'}")
-                    send_notification(site_name, url, "down", prev_status, error_detail, http_status_code)
+                    # 传递故障开始时间和检查统计到通知
+                    send_notification(
+                        site_name,
+                        url,
+                        "down",
+                        prev_status,
+                        error_detail,
+                        http_status_code,
+                        down_since=down_since_dt,
+                        failure_count=failure_count,
+                        fails_in_window=fails_in_window,
+                        window_size=len(history)
+                    )
                     site_statuses[site_name]["notification_sent"] = True
 
             # 触发恢复通知（需要足够的连续成功，避免抖动）
@@ -216,7 +300,21 @@ def _core_check_logic():
                 if success_count >= recovery_consecutive:
                     print(f"[告警触发] 恢复: {site_name} 当前状态={current_status}, 上次状态=无法访问, 连续成功={success_count}")
                     # 恢复的“上次状态”统一显示为 "无法访问"，更符合语义
-                    send_notification(site_name, url, "recovered", "无法访问")
+                    prev_down_since_str = prev.get("down_since")
+                    prev_down_since_dt = None
+                    if prev_down_since_str:
+                        try:
+                            prev_down_since_dt = datetime.datetime.strptime(prev_down_since_str, '%Y-%m-%d %H:%M:%S')
+                        except Exception:
+                            prev_down_since_dt = None
+                    send_notification(
+                        site_name,
+                        url,
+                        "recovered",
+                        "无法访问",
+                        down_since=prev_down_since_dt,
+                        recovery_success_count=success_count
+                    )
                     site_statuses[site_name]["notification_sent"] = False
 
         # 4) 记录日志到数据库
