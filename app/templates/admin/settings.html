@@ -1,0 +1,163 @@
+{% extends 'admin/master.html' %}
+
+{% block body %}
+  <div class="container mt-4">
+    <h2 class="mb-3">监控参数设置</h2>
+    <p class="text-muted small">这些参数会即时影响健康检查任务与数据保留策略，请谨慎调整。</p>
+
+    {% with messages = get_flashed_messages(with_categories=True) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+              <span aria-hidden="true">&times;</span>
+            </button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <form method="POST" action="{{ url_for('monitor_config.index') }}">
+      {{ form.hidden_tag() }}
+
+      <div class="card mb-4">
+        <div class="card-header font-weight-bold">基础运行参数</div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group col-md-6">
+              {{ form.monitor_interval_seconds.label(class_="font-weight-bold") }}
+              {{ form.monitor_interval_seconds(class_='form-control' + (' is-invalid' if form.monitor_interval_seconds.errors else '')) }}
+              <small class="form-text text-muted">健康检查频率，单位为秒。</small>
+              {% for error in form.monitor_interval_seconds.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <div class="form-group col-md-6">
+              {{ form.data_retention_days.label(class_="font-weight-bold") }}
+              {{ form.data_retention_days(class_='form-control' + (' is-invalid' if form.data_retention_days.errors else '')) }}
+              <small class="form-text text-muted">历史记录保留天数，仪表盘最长可查询 {{ form.data_retention_days.data }} 天。</small>
+              {% for error in form.data_retention_days.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mb-4">
+        <div class="card-header font-weight-bold">宕机判定参数</div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group col-md-4">
+              {{ form.failure_confirmation_threshold.label(class_="font-weight-bold") }}
+              {{ form.failure_confirmation_threshold(class_='form-control' + (' is-invalid' if form.failure_confirmation_threshold.errors else '')) }}
+              <small class="form-text text-muted">连续失败次数达到该值后触发告警。</small>
+              {% for error in form.failure_confirmation_threshold.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <div class="form-group col-md-4">
+              {{ form.failure_window_size.label(class_="font-weight-bold") }}
+              {{ form.failure_window_size(class_='form-control' + (' is-invalid' if form.failure_window_size.errors else '')) }}
+              <small class="form-text text-muted">滑动窗口大小（最近 N 次检查）。</small>
+              {% for error in form.failure_window_size.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <div class="form-group col-md-4">
+              {{ form.failure_window_threshold.label(class_="font-weight-bold") }}
+              {{ form.failure_window_threshold(class_='form-control' + (' is-invalid' if form.failure_window_threshold.errors else '')) }}
+              <small class="form-text text-muted">窗口内达到该失败次数也会告警。</small>
+              {% for error in form.failure_window_threshold.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group col-md-4">
+              {{ form.recovery_confirmation_threshold.label(class_="font-weight-bold") }}
+              {{ form.recovery_confirmation_threshold(class_='form-control' + (' is-invalid' if form.recovery_confirmation_threshold.errors else '')) }}
+              <small class="form-text text-muted">连续成功次数达到该值后发送恢复通知。</small>
+              {% for error in form.recovery_confirmation_threshold.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <div class="form-group col-md-4">
+              {{ form.quick_retry_count.label(class_="font-weight-bold") }}
+              {{ form.quick_retry_count(class_='form-control' + (' is-invalid' if form.quick_retry_count.errors else '')) }}
+              <small class="form-text text-muted">单次失败后立即补充的重试次数。</small>
+              {% for error in form.quick_retry_count.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <div class="form-group col-md-4">
+              {{ form.quick_retry_delay_seconds.label(class_="font-weight-bold") }}
+              {{ form.quick_retry_delay_seconds(class_='form-control' + (' is-invalid' if form.quick_retry_delay_seconds.errors else '')) }}
+              <small class="form-text text-muted">快速重试之间的间隔（秒）。</small>
+              {% for error in form.quick_retry_delay_seconds.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mb-4">
+        <div class="card-header font-weight-bold">慢响应判定参数</div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group col-md-4">
+              {{ form.slow_response_threshold_seconds.label(class_="font-weight-bold") }}
+              {{ form.slow_response_threshold_seconds(class_='form-control' + (' is-invalid' if form.slow_response_threshold_seconds.errors else '')) }}
+              <small class="form-text text-muted">单次响应超过该时长视为慢响应（秒）。</small>
+              {% for error in form.slow_response_threshold_seconds.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <div class="form-group col-md-4">
+              {{ form.slow_response_confirmation_threshold.label(class_="font-weight-bold") }}
+              {{ form.slow_response_confirmation_threshold(class_='form-control' + (' is-invalid' if form.slow_response_confirmation_threshold.errors else '')) }}
+              <small class="form-text text-muted">连续慢响应次数达到该值后告警。</small>
+              {% for error in form.slow_response_confirmation_threshold.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <div class="form-group col-md-4">
+              {{ form.slow_response_recovery_threshold.label(class_="font-weight-bold") }}
+              {{ form.slow_response_recovery_threshold(class_='form-control' + (' is-invalid' if form.slow_response_recovery_threshold.errors else '')) }}
+              <small class="form-text text-muted">连续恢复次数达到该值后发送恢复通知。</small>
+              {% for error in form.slow_response_recovery_threshold.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group col-md-6">
+              {{ form.slow_response_window_size.label(class_="font-weight-bold") }}
+              {{ form.slow_response_window_size(class_='form-control' + (' is-invalid' if form.slow_response_window_size.errors else '')) }}
+              <small class="form-text text-muted">慢响应滑动窗口大小。</small>
+              {% for error in form.slow_response_window_size.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <div class="form-group col-md-6">
+              {{ form.slow_response_window_threshold.label(class_="font-weight-bold") }}
+              {{ form.slow_response_window_threshold(class_='form-control' + (' is-invalid' if form.slow_response_window_threshold.errors else '')) }}
+              <small class="form-text text-muted">窗口内慢响应次数达到该值后告警。</small>
+              {% for error in form.slow_response_window_threshold.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="text-right">
+        {{ form.submit(class_="btn btn-primary") }}
+      </div>
+    </form>
+  </div>
+{% endblock %}

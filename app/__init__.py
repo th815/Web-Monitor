@@ -1,14 +1,26 @@
 # web-monitor/app/__init__.py
 import os
+
 from flask import Flask
-from flask_login import LoginManager
 from flask_admin import Admin
 from flask_admin.menu import MenuLink
+from flask_login import LoginManager
+
 from . import extensions
-from .models import User, MonitoredSite, HealthCheckLog
+from .commands import create_reset_token_command, init_db_command
+from .models import HealthCheckLog, MonitoredSite, MonitoringConfig, User
+from .routes import (
+    AuthenticatedMenuLink,
+    HealthCheckLogView,
+    MonitoringSettingsView,
+    MonitoredSiteView,
+    MyAdminIndexView,
+    ThemeSettingsView,
+    main_bp,
+)
 from .services import check_website_health, cleanup_old_data
-from .routes import main_bp, MyAdminIndexView, MonitoredSiteView, HealthCheckLogView, AuthenticatedMenuLink, ThemeSettingsView
-from .commands import init_db_command
+
+
 def create_app(config_object='config'):
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_object(config_object)
@@ -20,6 +32,7 @@ def create_app(config_object='config'):
     # 2. 初始化插件
     extensions.db.init_app(app)
     extensions.migrate.init_app(app, extensions.db)
+
     # 3. 初始化 Flask-Login
     login_manager = LoginManager()
     login_manager.init_app(app)
@@ -30,7 +43,6 @@ def create_app(config_object='config'):
         return User.query.get(int(user_id))
 
     # 4. 创建并配置一个全新的 Admin 实例
-    #    并用它覆盖掉 extensions.py 中那个空的 admin 实例
     extensions.admin = Admin(
         app,
         name='监控后台',
@@ -45,27 +57,25 @@ def create_app(config_object='config'):
     ]
 
     # 5. 添加所有导航项
-
-    # a. 核心功能视图
     extensions.admin.add_view(MonitoredSiteView(MonitoredSite, extensions.db.session, name="站点管理"))
     extensions.admin.add_view(HealthCheckLogView(HealthCheckLog, extensions.db.session, name="监控日志"))
+    extensions.admin.add_view(MonitoringSettingsView(name="监控参数", category="系统设置", endpoint='monitor_config'))
 
-    # b. 快捷链接
     extensions.admin.add_link(MenuLink(name='查看面板', url='/', icon_type='fa', icon_value='fa-desktop'))
-
-    # c. 用户操作（放入下拉菜单）
-    #    将 icon 参数移到 add_view 的参数列表中
     extensions.admin.add_view(ThemeSettingsView(name="更换主题", category="用户操作", endpoint='themes'))
-
     extensions.admin.add_link(MenuLink(name='修改密码', url='/admin/change-password', category='用户操作', icon_type='fa', icon_value='fa-key'))
-
     extensions.admin.add_link(AuthenticatedMenuLink(name='安全退出', endpoint='admin.logout', category='用户操作', icon_type='fa', icon_value='fa-sign-out'))
 
-    # 6. 注册蓝图
+    # 6. 注册蓝图与自定义命令
     app.register_blueprint(main_bp)
-
-    # 7. 注册自定义命令行
     app.cli.add_command(init_db_command)
+    app.cli.add_command(create_reset_token_command)
+
+    # 7. 确保数据库与动态配置就绪
+    with app.app_context():
+        extensions.db.create_all()
+        monitoring_config = MonitoringConfig.ensure(app.config)
+        monitoring_config.apply_to_config(app.config)
 
     # 8. 配置和启动后台定时任务
     if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
@@ -86,9 +96,5 @@ def create_app(config_object='config'):
                 args=[app]
             )
             print("后台监控任务已启动...")
-
-    # 9. 确保数据库表存在
-    with app.app_context():
-        extensions.db.create_all()
 
     return app
