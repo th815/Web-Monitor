@@ -25,6 +25,10 @@ QYWECHAT_WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOU
 MONITOR_INTERVAL_SECONDS = 60
 MONITOR_INTERVAL_SECONDS = int(os.getenv('MONITOR_INTERVAL_SECONDS', '20'))
 SLOW_RESPONSE_THRESHOLD_SECONDS = 3.0  # 响应超过该阈值判定为“访问过慢”
+SLOW_RESPONSE_CONFIRMATION_THRESHOLD = 3  # 连续判定“访问过慢” N 次后告警
+SLOW_RESPONSE_WINDOW_SIZE = 5             # 最近 M 次检查作为慢响应滑动窗口
+SLOW_RESPONSE_WINDOW_THRESHOLD = 3        # 窗口内慢响应次数达到 K 次也告警
+SLOW_RESPONSE_RECOVERY_THRESHOLD = 2      # 连续正常 N 次后下发“慢响应恢复”
 
 # 告警判定参数（更精准，降低误报与漏报）
 FAILURE_CONFIRMATION_THRESHOLD = 3       # 连续失败 N 次后告警

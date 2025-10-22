@@ -89,16 +89,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             },
 
-dataZoom: [
-    {
-        type: 'slider', filterMode: 'weakFilter', showDataShadow: false,
-        bottom: 10, height: 24, borderColor: 'transparent', backgroundColor: '#e2e2e2',
-        handleIcon: 'path://M10.7,11.9H9.3c-4.9,0.3-8.8,4.4-8.8,9.4c0,5,3.9,9.1,8.8,9.4h1.3c4.9-0.3,8.8-4.4,8.8-9.4C19.5,16.3,15.6,12.2,10.7,11.9z M13.3,24.4H6.7V23h6.6V24.4z M13.3,22H6.7v-1.4h6.6V22z',
-        handleSize: 20, handleStyle: { color: '#fff', shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.3)' }
-    },
-    { type: 'inside', filterMode: 'weakFilter' }
-],
-grid: { top: 10, left: 100, right: 20, bottom: 60 },
+            dataZoom: [
+                {
+                    type: 'slider',
+                    filterMode: 'weakFilter',
+                    showDataShadow: false,
+                    bottom: 10,
+                    height: 24,
+                    borderColor: 'transparent',
+                    backgroundColor: '#e2e2e2',
+                    handleIcon: 'path://M10.7,11.9H9.3c-4.9,0.3-8.8,4.4-8.8,9.4c0,5,3.9,9.1,8.8,9.4h1.3c4.9-0.3,8.8-4.4,8.8-9.4C19.5,16.3,15.6,12.2,10.7,11.9z M13.3,24.4H6.7V23h6.6V24.4z M13.3,22H6.7v-1.4h6.6V22z',
+                    handleSize: 20,
+                    handleStyle: { color: '#fff', shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.3)' },
+                    zoomOnMouseWheel: false,
+                    moveOnMouseWheel: false,
+                    moveOnMouseMove: false
+                }
+            ],
+            grid: { top: 10, left: 100, right: 20, bottom: 60 },
             xAxis: {
                 type: 'time',
                 min: new Date(currentParams.start_iso),
@@ -171,7 +179,12 @@ grid: { top: 10, left: 100, right: 20, bottom: 60 },
             grid: { top: 60, left: 50, right: 50, bottom: 60 },
             xAxis: { type: 'category', boundaryGap: false, data: sortedTimestamps },
             yAxis: { type: 'value', name: '响应时间 (秒)' },
-            dataZoom: [{ type: 'inside' }, { type: 'slider' }],
+            dataZoom: [{
+                type: 'slider',
+                zoomOnMouseWheel: false,
+                moveOnMouseWheel: false,
+                moveOnMouseMove: false
+            }],
             series: responseTimeSeries
         }, true);
     }
@@ -215,11 +228,23 @@ grid: { top: 10, left: 100, right: 20, bottom: 60 },
             if (!data[siteName]) return '';
             const site = data[siteName];
             const statusClass = `status-${site.status === '正常' ? 'ok' : (site.status === '访问过慢' ? 'slow' : 'down')}`;
+            const statusSpecificLine =
+                site.status === '无法访问' && site.down_since
+                    ? `<p><strong>故障开始:</strong> ${site.down_since}</p>`
+                    : site.status === '访问过慢' && site.slow_since
+                        ? `<p><strong>减速开始:</strong> ${site.slow_since}</p>`
+                        : '';
+            const totalChecksLine = site.total_checks ? `<p><strong>累计检查:</strong> ${site.total_checks}</p>` : '';
+            const responseTimeText = typeof site.response_time_seconds === 'number'
+                ? `${site.response_time_seconds.toFixed(2)}秒`
+                : 'N/A';
             return `
                 <div class="status-card ${statusClass}">
                     <h3>${siteName}</h3>
                     <p><strong>状态:</strong> ${site.status}</p>
-                    <p><strong>响应时间:</strong> ${site.response_time_seconds !== null ? site.response_time_seconds + 's' : 'N/A'}</p>
+                    ${statusSpecificLine}
+                    <p><strong>响应时间:</strong> ${responseTimeText}</p>
+                    ${totalChecksLine}
                     <p><strong>上次检查:</strong> ${site.last_checked}</p>
                 </div>`;
         }).join('');

@@ -26,7 +26,8 @@ A lightweight, beautiful, and powerful self-hosted website health monitoring das
 *   **企业微信/Webhook 告警**:
     *   当网站连续多次无法访问时，通过 Webhook 发送告警通知。
     *   当网站从故障中恢复时，发送恢复通知。
-    *   内置防抖机制（连续失败N次后才告警），避免网络波动造成的频繁骚扰。
+    *   当网站在多个周期内响应过慢时，主动推送性能告警，并在响应恢复后通知。
+    *   内置防抖机制（连续失败/慢响应 N 次后才告警），避免网络波动造成的频繁骚扰。
 *   **后台定时任务**: 使用 **APScheduler** 自动执行周期性健康检查和历史数据清理任务。
 *   **数据库平滑升级**: 集成 **Flask-Migrate**，修改数据模型后无需删库跑路，一条命令即可热更新数据库结构，保留所有历史数据。
 
@@ -86,6 +87,7 @@ A lightweight, beautiful, and powerful self-hosted website health monitoring das
         ```
     *   **`QYWECHAT_WEBHOOK_URL`**: (可选) 填入你的企业微信群机器人的 Webhook URL 以启用告警通知功能。
     *   **`MONITOR_INTERVAL_SECONDS`**: (可选) 健康检查频率（秒）。可通过环境变量 MONITOR_INTERVAL_SECONDS 配置，默认 20 秒。
+    *   **慢响应告警参数**（可选）: 通过 `SLOW_RESPONSE_THRESHOLD_SECONDS`、`SLOW_RESPONSE_CONFIRMATION_THRESHOLD`、`SLOW_RESPONSE_WINDOW_THRESHOLD`、`SLOW_RESPONSE_RECOVERY_THRESHOLD` 精细化控制慢响应判定与恢复机制。
 
 ### 4. 数据库初始化与迁移 (Database Initialization & Migration)
 
