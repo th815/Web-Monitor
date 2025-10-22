@@ -69,20 +69,47 @@ color: #555;
 
 /* --- 控制器区域 (核心美化) --- */
 .controls {
-display: flex;
-flex-wrap: wrap;
-gap: 30px;
-align-items: center;
+display: grid;
+grid-template-columns: minmax(0, 1fr);
+gap: 24px;
+margin-bottom: 20px;
+}
+
+@media (min-width: 992px) {
+    .controls {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 .control-group {
 display: flex;
-align-items: center;
-gap: 15px;
+flex-direction: column;
+align-items: flex-start;
+gap: 14px;
+width: 100%;
 }
 
-.control-group label.group-title {
-font-weight: bold;
+.control-group--sites {
+    grid-column: 1 / -1;
+}
+
+.control-header {
+display: flex;
+align-items: center;
+justify-content: space-between;
+gap: 12px;
+width: 100%;
+flex-wrap: wrap;
+}
+
+.control-header-actions {
+display: flex;
+gap: 10px;
+flex-wrap: wrap;
+}
+
+.group-title {
+font-weight: 600;
 font-size: 16px;
 white-space: nowrap;
 }
@@ -91,6 +118,30 @@ white-space: nowrap;
 display: flex;
 flex-wrap: wrap;
 gap: 10px;
+width: 100%;
+}
+
+.options-wrapper--sites {
+max-height: 240px;
+overflow-y: auto;
+padding: 12px 10px 6px;
+background-color: #f7fbff;
+border: 1px solid #e2e8f0;
+border-radius: 10px;
+box-sizing: border-box;
+}
+
+.options-wrapper--sites::-webkit-scrollbar {
+width: 6px;
+}
+
+.options-wrapper--sites::-webkit-scrollbar-thumb {
+background: rgba(52, 152, 219, 0.35);
+border-radius: 6px;
+}
+
+.options-wrapper--sites::-webkit-scrollbar-track {
+background: transparent;
 }
 
 /* 隐藏原始的 checkbox */
@@ -100,7 +151,7 @@ display: none;
 
 /* 自定义 checkbox 样式 */
 .site-selector-label span {
-display: block;
+display: inline-block;
 padding: 8px 15px;
 border: 1px solid #ccc;
 border-radius: 20px;
@@ -125,6 +176,10 @@ border-radius: 5px;
 cursor: pointer;
 background: #fff;
 transition: all 0.2s ease-in-out;
+font-size: 14px;
+display: inline-flex;
+align-items: center;
+justify-content: center;
 }
 
 .control-btn:hover, .time-btn:hover {
@@ -138,62 +193,107 @@ color: white;
 border-color: #3498db;
 }
 
-.control-group--time {
-    flex-direction: column;
-    align-items: flex-start;
+.control-btn--ghost {
+background: transparent;
+border-color: #d0d0d0;
+}
+
+.control-btn--ghost:hover {
+background-color: #f5f5f5;
+}
+
+.control-group--time .options-wrapper--time {
     gap: 12px;
 }
 
-.control-group--time .options-wrapper {
-    width: 100%;
+.control-group--time .time-btn {
+    min-width: 82px;
 }
 
 .custom-range {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px;
+display: flex;
+flex-wrap: wrap;
+align-items: center;
+gap: 10px;
+width: 100%;
 }
 
 #custom-range-start,
 #custom-range-end {
-    border: 1px solid #ddd;
-    padding: 7px 12px;
-    border-radius: 5px;
-    width: 200px;
-    text-align: center;
-    background-color: #fff;
-    cursor: pointer;
+border: 1px solid #ddd;
+padding: 7px 12px;
+border-radius: 5px;
+width: 200px;
+max-width: 100%;
+text-align: center;
+background-color: #fff;
+cursor: pointer;
+box-sizing: border-box;
 }
 
 #custom-range-start {
-    background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='currentColor' class='bi bi-calendar-event' viewBox='0 0 16 16'%3E%3Cpath d='M11 6.5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1-.5-.5v-1z'/%3E%3Cpath d='M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z'/%3E%3C/svg%3E") no-repeat 95% center;
-    background-size: 16px;
+background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='currentColor' class='bi bi-calendar-event' viewBox='0 0 16 16'%3E%3Cpath d='M11 6.5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1-.5-.5v-1z'/%3E%3Cpath d='M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z'/%3E%3C/svg%3E") no-repeat 95% center;
+background-size: 16px;
 }
 
 .range-separator {
-    font-weight: 600;
-    color: #666;
-    margin: 0 4px;
+font-weight: 600;
+color: #666;
+margin: 0 4px;
 }
 
 .custom-range button {
-    height: 38px;
-}
-
-.control-btn--ghost {
-    background: transparent;
-    border-color: #d0d0d0;
-}
-
-.control-btn--ghost:hover {
-    background-color: #f5f5f5;
+height: 38px;
 }
 
 .control-hint {
-    margin: 0;
-    font-size: 13px;
-    color: #666;
+margin: 0;
+font-size: 13px;
+color: #666;
+}
+
+/* --- 统计速览卡片 --- */
+.summary-cards {
+display: grid;
+grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+gap: 20px;
+margin-bottom: 20px;
+}
+
+.summary-card {
+background-color: #ffffff;
+border: 1px solid #e1e7ef;
+border-radius: 12px;
+box-shadow: 0 6px 16px rgba(31, 45, 61, 0.06);
+padding: 20px;
+display: flex;
+flex-direction: column;
+gap: 8px;
+}
+
+.summary-card-label {
+font-size: 14px;
+color: #5d6d85;
+letter-spacing: 0.4px;
+text-transform: uppercase;
+}
+
+.summary-card-value {
+font-size: 32px;
+font-weight: 600;
+color: #1c3d5a;
+line-height: 1.1;
+}
+
+.summary-card-hint {
+font-size: 13px;
+color: #8a99ad;
+}
+
+@media (max-width: 576px) {
+    .summary-card-value {
+        font-size: 26px;
+    }
 }
 
 /* --- Uptime 历史图 --- */
@@ -211,62 +311,62 @@ border-color: #3498db;
 .uptime-labels { display: flex; justify-content: space-between; font-size: 12px; color: #777; margin-top: 5px; }
 /* --- Uptime 历史状态 (连续分段长条图) --- */
 #uptime-history-charts {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
+display: flex;
+flex-direction: column;
+gap: 20px;
 }
 
 .site-uptime-wrapper {
-    display: flex;
-    flex-direction: column;
+display: flex;
+flex-direction: column;
 }
 
 .site-uptime-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
-    flex-wrap: wrap;
+display: flex;
+justify-content: space-between;
+align-items: center;
+margin-bottom: 8px;
+flex-wrap: wrap;
 }
 
 .site-uptime-title {
-    font-size: 18px;
-    font-weight: 600;
+font-size: 18px;
+font-weight: 600;
 }
 
 .site-uptime-stats {
-    font-size: 14px;
-    color: #555;
-    display: flex;
-    gap: 15px;
+font-size: 14px;
+color: #555;
+display: flex;
+gap: 15px;
 }
 
 .site-uptime-stats .stat-value {
-    font-weight: 600;
+font-weight: 600;
 }
 
 /* 长条图容器 */
 .uptime-bar-container {
-    display: flex;
-    width: 100%;
-    height: 35px; /* 长条图的高度 */
-    border-radius: 5px;
-    overflow: hidden;
-    background-color: #f0f0f0; /* 作为无数据时的背景色 */
-    gap: 1px; /* 分段之间的缝隙 */
+display: flex;
+width: 100%;
+height: 35px; /* 长条图的高度 */
+border-radius: 5px;
+overflow: hidden;
+background-color: #f0f0f0; /* 作为无数据时的背景色 */
+gap: 1px; /* 分段之间的缝隙 */
 }
 
 /* 每个小分段 */
 .uptime-bar-segment {
-    flex-grow: 1;
-    flex-basis: 0;
-    transition: filter 0.2s;
-    cursor: pointer;
+flex-grow: 1;
+flex-basis: 0;
+transition: filter 0.2s;
+cursor: pointer;
 }
 
 .uptime-bar-segment:hover {
-    filter: brightness(1.1);
-    transform: scaleY(1.05);
+filter: brightness(1.1);
+transform: scaleY(1.05);
 }
 
 /* 分段的颜色，复用 .bar-up/down/slow */
@@ -277,51 +377,89 @@ border-color: #3498db;
 
 
 .uptime-timeline-labels {
-    display: flex;
-    justify-content: space-between;
-    font-size: 12px;
-    color: #888;
-    margin-top: 5px;
-    padding: 0 5px;
+display: flex;
+justify-content: space-between;
+font-size: 12px;
+color: #888;
+margin-top: 5px;
+padding: 0 5px;
 }
 
-/* --- 悬浮窗样式 (保持不变) --- */
+/* --- 悬浮窗样式 --- */
 #uptime-tooltip {
-    background-color: rgba(0, 0, 0, 0.85);
-    color: white;
-    padding: 8px 12px;
-    border-radius: 5px;
-    font-size: 14px;
-    line-height: 1.5;
-    z-index: 1000;
-    transition: opacity 0.2s;
-    max-width: 300px;
-    word-wrap: break-word;
+background-color: rgba(0, 0, 0, 0.85);
+color: white;
+padding: 8px 12px;
+border-radius: 5px;
+font-size: 14px;
+line-height: 1.5;
+z-index: 1000;
+transition: opacity 0.2s;
+max-width: 300px;
+word-wrap: break-word;
 }
 
 /* --- 自定义时间轴图表的样式 --- */
 .uptime-history-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    margin-bottom: 15px;
+display: flex;
+justify-content: space-between;
+align-items: center;
+flex-wrap: wrap;
+gap: 12px;
+border-bottom: 2px solid #e0e0e0;
+padding-bottom: 10px;
+margin-bottom: 18px;
 }
+
+.uptime-history-header h2 {
+border-bottom: none;
+padding-bottom: 0;
+margin: 0;
+}
+
 .timeline-legend {
-    display: flex;
-    gap: 15px;
-    font-size: 14px;
+display: flex;
+gap: 15px;
+font-size: 14px;
+flex-wrap: wrap;
 }
+
 .legend-item {
+display: flex;
+align-items: center;
+gap: 5px;
+}
+
+.legend-color-box {
+display: inline-block;
+width: 15px;
+height: 15px;
+border-radius: 3px;
+}
+
+/* --- 图表容器扩展 --- */
+.chart-container--compact {
+    padding-bottom: 28px;
+}
+
+.chart-empty {
+    position: relative;
+}
+
+.chart-empty::after {
+    content: attr(data-empty-message);
+    position: absolute;
+    inset: 0;
     display: flex;
     align-items: center;
-    gap: 5px;
-}
-.legend-color-box {
-    display: inline-block;
-    width: 15px;
-    height: 15px;
-    border-radius: 3px;
+    justify-content: center;
+    color: #94a3b8;
+    font-size: 14px;
+    background: rgba(248, 250, 252, 0.9);
+    border-radius: 8px;
+    text-align: center;
+    padding: 0 16px;
+    pointer-events: none;
 }
 
 /* --- 页脚 --- */
@@ -344,9 +482,9 @@ footer a:hover {
 
 /* 修复 timeline 滑块被容器遮挡的问题 */
 .uptime-history-container {
-    overflow: visible;
-    padding-bottom: 24px;
+overflow: visible;
+padding-bottom: 40px;
 }
 #timeline-chart {
-    overflow: visible;
+overflow: visible;
 }

@@ -7,6 +7,7 @@ from flask_admin import AdminIndexView, BaseView, expose
 from flask_admin.menu import MenuLink
 from flask_admin.contrib.sqla import ModelView
 from flask_login import current_user, login_user, logout_user, login_required
+from sqlalchemy import inspect as sa_inspect
 
 from .extensions import db, scheduler
 from .forms import (
@@ -23,7 +24,7 @@ from .models import (
     PasswordResetToken,
     User,
 )
-from .services import site_statuses, status_lock
+from .services import site_statuses, status_lock, send_management_notification
 
 # --- 【新增】时区转换和格式化帮助函数 ---
 def to_gmt8(utc_dt):
@@ -192,13 +193,43 @@ class MonitoringSettingsView(BaseView):
 
         form = MonitoringSettingsForm()
         config_record = MonitoringConfig.ensure(current_app.config)
+        field_labels = [
+            ('monitor_interval_seconds', '监控间隔 (秒)'),
+            ('slow_response_threshold_seconds', '慢响应阈值 (秒)'),
+            ('slow_response_confirmation_threshold', '慢响应确认次数'),
+            ('slow_response_window_size', '慢响应窗口大小'),
+            ('slow_response_window_threshold', '慢响应窗口阈值'),
+            ('slow_response_recovery_threshold', '慢响应恢复阈值'),
+            ('failure_confirmation_threshold', '失败确认次数'),
+            ('failure_window_size', '失败窗口大小'),
+            ('failure_window_threshold', '失败窗口阈值'),
+            ('recovery_confirmation_threshold', '恢复确认次数'),
+            ('quick_retry_count', '快速重试次数'),
+            ('quick_retry_delay_seconds', '快速重试间隔 (秒)'),
+            ('data_retention_days', '数据保留天数')
+        ]
+        original_snapshot = {field: getattr(config_record, field) for field, _ in field_labels}
+
+        def _format_config_value(value):
+            if isinstance(value, float):
+                return f"{value:.3f}".rstrip('0').rstrip('.')
+            return value
 
         if not form.is_submitted():
             config_record.populate_form(form)
 
+        changed_fields = []
         if form.validate_on_submit():
             try:
                 config_record.update_from_form(form)
+                changed_fields = [
+                    (
+                        label,
+                        f"{_format_config_value(original_snapshot.get(field))} -> {_format_config_value(getattr(config_record, field))}"
+                    )
+                    for field, label in field_labels
+                    if original_snapshot.get(field) != getattr(config_record, field)
+                ]
                 db.session.commit()
             except Exception as exc:
                 db.session.rollback()
@@ -212,6 +243,9 @@ class MonitoringSettingsView(BaseView):
                         job.reschedule(trigger='interval', seconds=current_app.config['MONITOR_INTERVAL_SECONDS'])
                 except Exception as exc:
                     current_app.logger.warning('重新调度健康检查任务失败: %s', exc)
+                if changed_fields:
+                    operator = current_user.username if current_user.is_authenticated else None
+                    send_management_notification('监控参数更新', operator=operator, details=changed_fields)
                 flash('监控参数已更新。', 'success')
                 return redirect(url_for('.index'))
         elif form.is_submitted():
@@ -258,6 +292,71 @@ class MonitoredSiteView(SecureModelView):
     column_filters = ['is_active']
    # form_columns = ['name', 'url', 'is_active']
     page_size = 50
+
+    def on_model_change(self, form, model, is_created):
+        payload = None
+        if is_created:
+            payload = {
+                'event': '新增监控站点',
+                'details': [
+                    ('网站名称', model.name),
+                    ('监控地址', model.url),
+                    ('初始状态', '启用' if model.is_active else '禁用')
+                ]
+            }
+        else:
+            state = sa_inspect(model)
+            changes = []
+
+            def _display(value):
+                return '（空）' if value in (None, '') else value
+
+            name_history = state.attrs.name.history
+            if name_history.has_changes():
+                old_value = name_history.deleted[0] if name_history.deleted else None
+                changes.append(('网站名称变更', f"{_display(old_value)} -> {model.name}"))
+
+            url_history = state.attrs.url.history
+            if url_history.has_changes():
+                old_value = url_history.deleted[0] if url_history.deleted else None
+                changes.append(('监控地址变更', f"{_display(old_value)} -> {model.url}"))
+
+            active_history = state.attrs.is_active.history
+            if active_history.has_changes():
+                old_value = active_history.deleted[0] if active_history.deleted else (not model.is_active)
+                new_value = active_history.added[0] if active_history.added else model.is_active
+                old_label = '启用' if bool(old_value) else '禁用'
+                new_label = '启用' if bool(new_value) else '禁用'
+                changes.append(('启用状态变更', f"{old_label} -> {new_label}"))
+
+            if changes:
+                details = [('当前网站名称', model.name)]
+                details.extend(changes)
+                payload = {'event': '更新监控站点', 'details': details}
+
+        if payload:
+            setattr(model, '_pending_admin_notification', payload)
+        elif hasattr(model, '_pending_admin_notification'):
+            delattr(model, '_pending_admin_notification')
+
+        return super().on_model_change(form, model, is_created)
+
+    def after_model_change(self, form, model, is_created):
+        payload = getattr(model, '_pending_admin_notification', None)
+        if payload and payload.get('details'):
+            operator = current_user.username if current_user.is_authenticated else None
+            send_management_notification(payload.get('event', '站点配置变更'), operator=operator, details=payload['details'])
+            delattr(model, '_pending_admin_notification')
+        return super().after_model_change(form, model, is_created)
+
+    def after_model_delete(self, model):
+        operator = current_user.username if current_user.is_authenticated else None
+        send_management_notification(
+            '删除监控站点',
+            operator=operator,
+            details=[('网站名称', model.name), ('监控地址', model.url)]
+        )
+        return super().after_model_delete(model)
 
 class HealthCheckLogView(SecureModelView):
     menu_icon_type = 'fa'

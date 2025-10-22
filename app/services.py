@@ -14,6 +14,41 @@ status_lock = threading.Lock()
 
 
 # --- 通知函数 ---
+def _send_wechat_markdown(content, *, webhook_url, log_prefix, success_context):
+    if not webhook_url or "YOUR_KEY_HERE" in webhook_url:
+        print(f"{log_prefix} 企业微信 Webhook URL 未配置，跳过通知。")
+        return False
+
+    payload = {"msgtype": "markdown", "markdown": {"content": content}}
+    try:
+        resp = requests.post(
+            webhook_url,
+            data=json.dumps(payload),
+            headers={'Content-Type': 'application/json'},
+            timeout=10
+        )
+        ok = False
+        err_detail_msg = ""
+        if resp.status_code == 200:
+            try:
+                res_json = resp.json()
+            except ValueError:
+                res_json = None
+            if isinstance(res_json, dict) and res_json.get("errcode") == 0:
+                ok = True
+            else:
+                err_detail_msg = f"非零返回: {res_json}"
+        else:
+            err_detail_msg = f"HTTP {resp.status_code}, body: {resp.text[:200]}"
+        if ok:
+            print(f"{log_prefix} 企业微信通知发送成功: {success_context}")
+        else:
+            print(f"{log_prefix} 企业微信通知发送失败: {success_context}，原因: {err_detail_msg}")
+        return ok
+    except Exception as exc:
+        print(f"{log_prefix} 发送企业微信通知时发生异常: {exc}")
+        return False
+
 def send_notification(site_name, url, current_status_key, previous_status, *, error_detail=None, http_code=None, context=None):
     """
     发送企业微信通知的统一函数。
@@ -60,34 +95,43 @@ def send_notification(site_name, url, current_status_key, previous_status, *, er
     elif http_code and http_code >= 400:
         content += f"\n> **错误详情**: `HTTP {http_code}`"
 
-    payload = {"msgtype": "markdown", "markdown": {"content": content}}
-    try:
-        print(f"[通知] 准备发送企业微信通知: {site_name} - {status_text} -> 上次状态: {previous_status} | URL: {url}")
-        resp = requests.post(
-            webhook_url,
-            data=json.dumps(payload),
-            headers={'Content-Type': 'application/json'},
-            timeout=10
-        )
-        ok = False
-        err_detail_msg = ""
-        if resp.status_code == 200:
-            try:
-                res_json = resp.json()
-            except ValueError:
-                res_json = None
-            if isinstance(res_json, dict) and res_json.get("errcode") == 0:
-                ok = True
-            else:
-                err_detail_msg = f"非零返回: {res_json}"
-        else:
-            err_detail_msg = f"HTTP {resp.status_code}, body: {resp.text[:200]}"
-        if ok:
-            print(f"[通知] 企业微信通知发送成功: {site_name} 状态变更为 {status_text}")
-        else:
-            print(f"[通知] 企业微信通知发送失败: {site_name} 状态变更为 {status_text}，原因: {err_detail_msg}")
-    except Exception as e:
-        print(f"[通知] 发送企业微信通知时发生异常: {e}")
+    print(f"[通知] 准备发送企业微信通知: {site_name} - {status_text} -> 上次状态: {previous_status} | URL: {url}")
+    _send_wechat_markdown(
+        content,
+        webhook_url=webhook_url,
+        log_prefix='[通知]',
+        success_context=f"{site_name} 状态变更为 {status_text}"
+    )
+
+
+def send_management_notification(event_title, *, operator=None, details=None):
+    """发送后台配置变更的企业微信通知。"""
+    webhook_url = current_app.config.get('QYWECHAT_WEBHOOK_URL')
+    if not webhook_url or "YOUR_KEY_HERE" in webhook_url:
+        print("[配置通知] 企业微信 Webhook URL 未配置，跳过通知。")
+        return
+
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    content = (
+        f"## 配置变更通知\n"
+        f"> **事件**: {event_title}\n"
+        f"> **发生时间**: {timestamp}"
+    )
+    if operator:
+        content += f"\n> **操作人**: {operator}"
+    if details:
+        for label, value in details:
+            if value is None or value == "":
+                continue
+            content += f"\n> **{label}**: {value}"
+
+    print(f"[配置通知] 准备发送企业微信通知: {event_title}")
+    _send_wechat_markdown(
+        content,
+        webhook_url=webhook_url,
+        log_prefix='[配置通知]',
+        success_context=event_title
+    )
 
 
 # --- 内部工具函数 ---
