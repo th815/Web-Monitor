@@ -14,40 +14,51 @@ status_lock = threading.Lock()
 
 
 # --- 通知函数 ---
-def send_notification(site_name, url, current_status_key, previous_status, error_detail=None, http_code=None):
+def send_notification(site_name, url, current_status_key, previous_status, *, error_detail=None, http_code=None, context=None):
     """
     发送企业微信通知的统一函数。
-    current_status_key: "down" | "recovered"
+    current_status_key: "down" | "recovered" | "slow" | "slow_recovered"
     previous_status: 通知中用于显示的上次状态（字符串）
+    context: 可选的 (label, value) 元组列表，用于拼接额外字段
     """
     webhook_url = current_app.config.get('QYWECHAT_WEBHOOK_URL')
     if not webhook_url or "YOUR_KEY_HERE" in webhook_url:
         print("企业微信 Webhook URL 未配置，跳过通知。")
         return
 
-    if current_status_key == "recovered":
-        status_text = "已恢复正常"
-        color = "info"
-    elif current_status_key == "down":
-        status_text = "无法访问"
-        color = "warning"
-    else:
+    status_map = {
+        "down": ("网站宕机告警通知", "无法访问", "warning"),
+        "recovered": ("网站恢复通知", "已恢复正常", "info"),
+        "slow": ("网站性能告警通知", "访问过慢", "comment"),
+        "slow_recovered": ("网站性能恢复通知", "访问速度恢复正常", "info"),
+    }
+    status_meta = status_map.get(current_status_key)
+    if not status_meta:
         return
 
+    title, status_text, color = status_meta
+
     content = (
-        f"## 网站健康状态变更通知\n"
+        f"## {title}\n"
         f"> **网站名称**: {site_name}\n"
         f"> **监控地址**: {url}\n"
         f"> **当前状态**: <font color=\"{color}\">{status_text}</font>\n"
         f"> **上次状态**: {previous_status}"
     )
 
-    # 构建更详细的错误原因，优先显示 HTTP Code
+    if context:
+        for label, value in context:
+            if value is None or value == "":
+                continue
+            content += f"\n> **{label}**: {value}"
+
     if error_detail:
         reason = str(error_detail).replace("'", "`").replace('"', '`')
         if http_code and http_code >= 400:
             reason = f"HTTP {http_code}"
         content += f"\n> **错误详情**: `{reason}`"
+    elif http_code and http_code >= 400:
+        content += f"\n> **错误详情**: `HTTP {http_code}`"
 
     payload = {"msgtype": "markdown", "markdown": {"content": content}}
     try:
@@ -80,6 +91,40 @@ def send_notification(site_name, url, current_status_key, previous_status, error
 
 
 # --- 内部工具函数 ---
+def _parse_datetime_safe(value):
+    if not value:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _format_duration(delta):
+    if not delta:
+        return None
+    seconds = int(delta.total_seconds())
+    if seconds < 0:
+        seconds = 0
+    days, remainder = divmod(seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}天")
+    if hours:
+        parts.append(f"{hours}小时")
+    if minutes:
+        parts.append(f"{minutes}分钟")
+    if seconds or not parts:
+        parts.append(f"{seconds}秒")
+    return ''.join(parts)
+
+
+def _format_ratio(count, total):
+    return f"{count}/-" if not total else f"{count}/{total}"
+
+
 def _single_http_check(url, timeout, slow_threshold):
     """执行一次 HTTP 检查，返回 (status, response_time, http_code, error_detail)。
     status: '正常' | '访问过慢' | 抛异常
@@ -110,16 +155,16 @@ def _core_check_logic():
     request_timeout = current_app.config.get('REQUEST_TIMEOUT', 10)
     slow_threshold = current_app.config.get('SLOW_RESPONSE_THRESHOLD_SECONDS',
                                             current_app.config.get('SLOW_RESPONSE_THRESHOLD', 5))
-    # 连续失败阈值（防止误报）
     fail_consecutive = current_app.config.get('FAILURE_CONFIRMATION_THRESHOLD', 3)
-    # 滑动窗口判定（提升短时故障捕捉能力，同时抑制抖动）
     window_size = current_app.config.get('FAILURE_WINDOW_SIZE', 5)
-    window_threshold = current_app.config.get('FAILURE_WINDOW_THRESHOLD', 3)  # 最近 window_size 次中失败 >= 该值 则告警
-    # 恢复需要连续成功次数阈值（避免快速抖动导致的假恢复）
+    window_threshold = current_app.config.get('FAILURE_WINDOW_THRESHOLD', 3)
     recovery_consecutive = current_app.config.get('RECOVERY_CONFIRMATION_THRESHOLD', 2)
-    # 失败时快速复检（降低网络瞬断误报）
     quick_retry_count = current_app.config.get('QUICK_RETRY_COUNT', 1)
     quick_retry_delay = current_app.config.get('QUICK_RETRY_DELAY_SECONDS', 2)
+    slow_consecutive = current_app.config.get('SLOW_RESPONSE_CONFIRMATION_THRESHOLD', 3)
+    slow_window_size = current_app.config.get('SLOW_RESPONSE_WINDOW_SIZE', 5)
+    slow_window_threshold = current_app.config.get('SLOW_RESPONSE_WINDOW_THRESHOLD', 3)
+    slow_recovery_consecutive = current_app.config.get('SLOW_RESPONSE_RECOVERY_THRESHOLD', recovery_consecutive)
 
     print(f"开始执行健康检查，共 {len(sites_to_monitor)} 个网站...")
 
@@ -131,13 +176,12 @@ def _core_check_logic():
         http_status_code = None
         error_detail = None
 
-        # 1) 首次请求
         try:
             current_status, response_time, http_status_code, _ = _single_http_check(url, request_timeout, slow_threshold)
         except requests.exceptions.RequestException as e:
             current_status = '无法访问'
             if isinstance(e, requests.exceptions.HTTPError):
-                error_detail = "服务器错误"  # 具体 code 通过 http_status_code 单独记录
+                error_detail = "服务器错误"
                 if hasattr(e, 'response') and e.response is not None:
                     try:
                         http_status_code = e.response.status_code
@@ -150,7 +194,6 @@ def _core_check_logic():
             else:
                 error_detail = "未知请求异常"
 
-            # 2) 快速重试，尽量避免瞬时网络抖动导致误报
             retry_succeeded = False
             for _ in range(quick_retry_count):
                 try:
@@ -159,82 +202,207 @@ def _core_check_logic():
                         url, request_timeout, slow_threshold
                     )
                     retry_succeeded = True
-                    # 成功就结束重试
                     break
                 except requests.exceptions.RequestException:
                     continue
             if retry_succeeded:
-                # 重试成功视为本次检查成功，清空错误详情
                 error_detail = None
-            else:
-                # 仍然失败则维持 "无法访问" 的结论
-                pass
 
-        # 3) 更新状态与判定告警/恢复
+        now = datetime.datetime.now()
+        now_str = now.strftime('%Y-%m-%d %H:%M:%S')
+        rounded_response_time = round(response_time, 2) if response_time is not None else None
+        response_time_display = f"{rounded_response_time:.2f}秒" if rounded_response_time is not None else None
+
         with status_lock:
             prev = site_statuses.get(site_name, {})
             prev_status = prev.get("status", "未知")
             notification_sent = prev.get("notification_sent", False)
-            failure_count = prev.get("failure_count", 0)
-            success_count = prev.get("success_count", 0)
-            history = prev.get("history", [])  # 仅存 0/1 序列（0=成功，1=失败）
+            slow_notification_sent = prev.get("slow_notification_sent", False)
+            prev_failure_count = prev.get("failure_count", 0)
+            prev_success_count = prev.get("success_count", 0)
+            prev_slow_count = prev.get("slow_count", 0)
+            prev_history = prev.get("history", [])
+            prev_slow_history = prev.get("slow_history", [])
+            prev_total_checks = prev.get("total_checks", 0)
+            prev_down_since_dt = _parse_datetime_safe(prev.get("down_since"))
+            prev_slow_since_dt = _parse_datetime_safe(prev.get("slow_since"))
 
-            is_down = (current_status == '无法访问')
+            total_checks = prev_total_checks + 1
+            is_down = current_status == '无法访问'
+            is_slow = current_status == '访问过慢'
 
-            # 滑动窗口历史
-            history = (history + [1 if is_down else 0])[-window_size:]
-            fails_in_window = sum(history)
+            down_since_dt = prev_down_since_dt
+            slow_since_dt = prev_slow_since_dt
 
-            # 连续计数
             if is_down:
-                failure_count = failure_count + 1 if prev_status == '无法访问' else 1
+                failure_count = prev_failure_count + 1 if prev_status == '无法访问' else 1
                 success_count = 0
+                slow_count = 0
+                slow_history = (prev_slow_history + [0])[-slow_window_size:] if slow_window_size > 0 else []
+                slow_notification_sent = False
+                slow_since_dt = None
+                if prev_status != '无法访问':
+                    down_since_dt = now
             else:
-                success_count = success_count + 1 if prev_status in ['正常', '访问过慢'] else 1
                 failure_count = 0
+                slow_history = (prev_slow_history + [1 if is_slow else 0])[-slow_window_size:] if slow_window_size > 0 else []
+                if is_slow:
+                    slow_count = prev_slow_count + 1 if prev_status == '访问过慢' else 1
+                    if prev_status != '访问过慢':
+                        slow_since_dt = now
+                else:
+                    slow_count = 0
+                    slow_since_dt = None
+                if current_status == '正常':
+                    success_count = prev_success_count + 1 if prev_status == '正常' else 1
+                else:
+                    success_count = 0
+                down_since_dt = None
 
-            # 保存最新状态
+            history = (prev_history + [1 if is_down else 0])[-window_size:] if window_size > 0 else []
+            fails_in_window = sum(history)
+            slows_in_window = sum(slow_history)
+
+            down_since_str = down_since_dt.strftime('%Y-%m-%d %H:%M:%S') if down_since_dt else None
+            slow_since_str = slow_since_dt.strftime('%Y-%m-%d %H:%M:%S') if slow_since_dt else None
+            failure_window_display = _format_ratio(fails_in_window, len(history) or window_size)
+            slow_window_display = _format_ratio(slows_in_window, len(slow_history) or slow_window_size)
+
             site_statuses[site_name] = {
                 "status": current_status,
                 "failure_count": failure_count,
                 "success_count": success_count,
+                "slow_count": slow_count,
                 "history": history,
+                "slow_history": slow_history,
                 "notification_sent": notification_sent,
-                "response_time_seconds": round(response_time, 2) if response_time else None,
-                "last_checked": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                "slow_notification_sent": slow_notification_sent,
+                "response_time_seconds": rounded_response_time,
+                "last_checked": now_str,
+                "down_since": down_since_str,
+                "slow_since": slow_since_str,
+                "total_checks": total_checks
             }
 
-            # 触发宕机告警（满足 连续失败 或 窗口失败 比例）且尚未告警
+            down_duration_str = _format_duration(now - down_since_dt) if down_since_dt else None
+            slow_duration_str = _format_duration(now - slow_since_dt) if slow_since_dt else None
+
             if is_down and not notification_sent:
                 if failure_count >= fail_consecutive or fails_in_window >= window_threshold:
-                    print(f"[告警触发] 宕机: {site_name} 当前状态={current_status}, 上次状态={prev_status}, 连续失败={failure_count}, 窗口失败={fails_in_window}/{len(history)}, HTTP={http_status_code or 'N/A'}, 错误={error_detail or 'N/A'}")
-                    send_notification(site_name, url, "down", prev_status, error_detail, http_status_code)
+                    print(
+                        f"[告警触发] 宕机: {site_name} 当前状态={current_status}, 上次状态={prev_status}, "
+                        f"连续失败={failure_count}, 窗口失败={failure_window_display}, HTTP={http_status_code or 'N/A'}, "
+                        f"错误={error_detail or 'N/A'}, 故障开始={down_since_str or '刚刚'}"
+                    )
+                    context = [
+                        ("检测时间", now_str),
+                        ("故障开始时间", down_since_str or now_str),
+                        ("已持续", down_duration_str or "0秒"),
+                        ("连续失败次数", failure_count),
+                        ("窗口失败次数", failure_window_display),
+                        ("累计检查次数", total_checks),
+                    ]
+                    send_notification(
+                        site_name,
+                        url,
+                        "down",
+                        prev_status,
+                        error_detail=error_detail,
+                        http_code=http_status_code,
+                        context=context
+                    )
                     site_statuses[site_name]["notification_sent"] = True
 
-            # 触发恢复通知（需要足够的连续成功，避免抖动）
-            if (not is_down) and notification_sent:
+            if site_statuses[site_name]["notification_sent"] and current_status == '正常':
                 if success_count >= recovery_consecutive:
-                    print(f"[告警触发] 恢复: {site_name} 当前状态={current_status}, 上次状态=无法访问, 连续成功={success_count}")
-                    # 恢复的“上次状态”统一显示为 "无法访问"，更符合语义
-                    send_notification(site_name, url, "recovered", "无法访问")
+                    recovery_duration = _format_duration(now - prev_down_since_dt) if prev_down_since_dt else None
+                    recovery_context = [
+                        ("恢复检测时间", now_str),
+                        ("故障持续时长", recovery_duration),
+                        ("累计检查次数", total_checks),
+                        ("最近一次响应时间", response_time_display),
+                    ]
+                    print(
+                        f"[告警触发] 恢复: {site_name} 当前状态={current_status}, 上次状态=无法访问, "
+                        f"连续正常={success_count}, 持续时长={recovery_duration or '未知'}"
+                    )
+                    send_notification(
+                        site_name,
+                        url,
+                        "recovered",
+                        "无法访问",
+                        context=recovery_context
+                    )
                     site_statuses[site_name]["notification_sent"] = False
 
-        # 4) 记录日志到数据库
+            if is_slow and not is_down and not site_statuses[site_name]["slow_notification_sent"]:
+                if slow_count >= slow_consecutive or slows_in_window >= slow_window_threshold:
+                    print(
+                        f"[告警触发] 慢响应: {site_name} 响应时间={response_time_display or 'N/A'}, "
+                        f"连续慢响应={slow_count}, 窗口慢响应={slow_window_display}"
+                    )
+                    slow_context = [
+                        ("检测时间", now_str),
+                        ("访问减速开始时间", slow_since_str or now_str),
+                        ("已持续", slow_duration_str or "0秒"),
+                        ("连续慢响应次数", slow_count),
+                        ("窗口慢响应次数", slow_window_display),
+                        ("最近一次响应时间", response_time_display),
+                        ("累计检查次数", total_checks),
+                    ]
+                    send_notification(
+                        site_name,
+                        url,
+                        "slow",
+                        prev_status,
+                        error_detail=error_detail,
+                        http_code=http_status_code,
+                        context=slow_context
+                    )
+                    site_statuses[site_name]["slow_notification_sent"] = True
+
+            if site_statuses[site_name]["slow_notification_sent"] and current_status == '正常':
+                if success_count >= slow_recovery_consecutive:
+                    slow_recovery_duration = _format_duration(now - prev_slow_since_dt) if prev_slow_since_dt else None
+                    slow_recovery_context = [
+                        ("恢复检测时间", now_str),
+                        ("慢响应持续时长", slow_recovery_duration),
+                        ("累计检查次数", total_checks),
+                        ("最近一次响应时间", response_time_display),
+                    ]
+                    print(
+                        f"[告警触发] 慢响应恢复: {site_name} 当前状态={current_status}, "
+                        f"连续正常={success_count}, 慢响应持续时长={slow_recovery_duration or '未知'}"
+                    )
+                    send_notification(
+                        site_name,
+                        url,
+                        "slow_recovered",
+                        "访问过慢",
+                        context=slow_recovery_context
+                    )
+                    site_statuses[site_name]["slow_notification_sent"] = False
+
         log_entry = HealthCheckLog(
             site_name=site_name,
             status=current_status,
-            response_time_seconds=round(response_time, 2) if response_time else None,
+            response_time_seconds=rounded_response_time,
             http_status_code=http_status_code,
             error_detail=error_detail
         )
         db.session.add(log_entry)
-        db.session.commit()
 
         print(
             f"  - {site_name}: {current_status} (HTTP {http_status_code or 'N/A'}), "
-            f"连续失败: {failure_count}, 窗口失败: {fails_in_window}/{len(history)}, 连续成功: {success_count}"
+            f"响应时间: {response_time_display or 'N/A'}, 连续失败: {failure_count}, 窗口失败: {failure_window_display}, "
+            f"连续慢响应: {slow_count}, 慢响应窗口: {slow_window_display}, 连续正常: {success_count}, 累计检查: {total_checks}"
         )
 
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        print(f"健康检查日志提交失败: {e}")
     print("健康检查完成。")
 
 
