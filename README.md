@@ -10,7 +10,9 @@ A lightweight, beautiful, and powerful self-hosted website health monitoring das
 
 ---
 
-![Dashboard Screenshot](https://fastly.jsdelivr.net/gh/th815/images//blogCleanShot%202025-10-14%20at%2018.42.44.png)
+![前台展示页面截图](https://fastly.jsdelivr.net/gh/th815/images//blogCleanShot%202025-10-22%20at%2012.02.11.png)
+
+![企业微信告警截图](https://fastly.jsdelivr.net/gh/th815/images//blogCleanShot%202025-10-22%20at%2012.11.35.png)
 
 ## ✨ 功能特性 (Features)
 
@@ -145,7 +147,7 @@ flask run --host=0.0.0.0 --port=8080
     server {
         listen 80;
         server_name your_domain.com; # 替换为你的域名
-
+    
         location / {
             proxy_pass http://127.0.0.1:8080;
             proxy_set_header Host $host;

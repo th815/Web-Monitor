@@ -11,7 +11,7 @@ FLASK_ADMIN_SWATCH = 'lumen'
 
 # 基础配置
 SECRET_KEY = 'a-super-secret-key-that-you-should-change'
-QYWECHAT_WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY_HERE" # 记得替换成你的Key
+# QYWECHAT_WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY_HERE" # 记得替换成你的Key
 
 # SITES_TO_MONITOR = [
 #     {"name": "谷歌", "url": "https://www.google.com"},
@@ -22,7 +22,6 @@ QYWECHAT_WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOU
 #     {"name": "响应慢的网站", "url": "http://httpbin.org/delay/5"},
 # ]
 # 健康检查频率（秒）。可通过环境变量 MONITOR_INTERVAL_SECONDS 覆盖，默认 20 秒以更快触发告警。
-MONITOR_INTERVAL_SECONDS = 60
 MONITOR_INTERVAL_SECONDS = int(os.getenv('MONITOR_INTERVAL_SECONDS', '20'))
 SLOW_RESPONSE_THRESHOLD_SECONDS = 3.0  # 响应超过该阈值判定为“访问过慢”
 SLOW_RESPONSE_CONFIRMATION_THRESHOLD = 3  # 连续判定“访问过慢” N 次后告警
