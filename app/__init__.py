@@ -37,6 +37,10 @@ def create_app(config_object='config'):
     login_manager = LoginManager()
     login_manager.init_app(app)
     login_manager.login_view = 'admin.login'
+    login_manager.login_message = '请登录后再访问此页面。'
+    login_manager.login_message_category = 'warning'
+    login_manager.needs_refresh_message = '会话已过期，请重新验证身份。'
+    login_manager.needs_refresh_message_category = 'warning'
 
     @login_manager.user_loader
     def load_user(user_id):

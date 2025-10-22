@@ -1,13 +1,24 @@
-// web-monitor/app/static/js/dashboard.js (最终自定义系列版 - 已修复)
+// web-monitor/app/static/js/dashboard.js
 
 document.addEventListener('DOMContentLoaded', () => {
 
-    // --- 变量初始化 ---
+    // --- 图表实例与 DOM 引用 ---
     const timelineChartContainer = document.getElementById('timeline-chart');
     let timelineChart = echarts.init(timelineChartContainer);
-    const uptimeChart = echarts.init(document.getElementById('uptime-chart'));
-    const responseTimeChart = echarts.init(document.getElementById('response-time-chart'));
+    const uptimeChartContainer = document.getElementById('uptime-chart');
+    const uptimeChart = echarts.init(uptimeChartContainer);
+    const responseTimeChartContainer = document.getElementById('response-time-chart');
+    const responseTimeChart = echarts.init(responseTimeChartContainer);
+    const statusDistributionChartContainer = document.getElementById('status-distribution-chart');
+    const statusDistributionChart = statusDistributionChartContainer ? echarts.init(statusDistributionChartContainer) : null;
 
+    const summaryElements = {
+        siteCount: document.getElementById('summary-site-count'),
+        avgUptime: document.getElementById('summary-avg-uptime'),
+        avgResponse: document.getElementById('summary-avg-response'),
+        incidents: document.getElementById('summary-incident-count'),
+        incidentHint: document.getElementById('summary-incident-hint')
+    };
 
     const initialStatuses = window.INITIAL_STATUSES;
     const dataRetentionDays = window.DATA_RETENTION_DAYS;
@@ -15,16 +26,62 @@ document.addEventListener('DOMContentLoaded', () => {
     let rangePicker;
 
     const STATUS_COLORS = {
-        0: '#f0f0f0', 1: '#91cc75', 2: '#fac858', 3: '#ee6666'
+        0: '#f0f0f0',
+        1: '#91cc75',
+        2: '#fac858',
+        3: '#ee6666'
     };
 
-    // --- 【修复】重新添加回 toLocalISOString 函数 ---
-    const toLocalISOString = dt =>
-        `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}T${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
 
+    const formatDuration = (ms) => {
+        if (!ms || ms <= 0) {
+            return '0秒';
+        }
+        let seconds = Math.round(ms / 1000);
+        const days = Math.floor(seconds / 86400);
+        seconds -= days * 86400;
+        const hours = Math.floor(seconds / 3600);
+        seconds -= hours * 3600;
+        const minutes = Math.floor(seconds / 60);
+        seconds -= minutes * 60;
 
-    // --- 核心功能函数 ---
+        const parts = [];
+        if (days) parts.push(`${days}天`);
+        if (hours) parts.push(`${hours}小时`);
+        if (minutes) parts.push(`${minutes}分钟`);
+        if (seconds || parts.length === 0) parts.push(`${seconds}秒`);
+        return parts.join('');
+    };
 
+    const setChartEmptyState = (chart, domElement, message) => {
+        if (!chart || !domElement) {
+            return;
+        }
+        chart.hideLoading();
+        if (message) {
+            chart.clear();
+            domElement.classList.add('chart-empty');
+            domElement.setAttribute('data-empty-message', message);
+        } else {
+            domElement.classList.remove('chart-empty');
+            domElement.removeAttribute('data-empty-message');
+        }
+    };
+
+    const determinePickerLocale = () => {
+        const htmlLang = (document.documentElement.lang || '').toLowerCase();
+        if (htmlLang.startsWith('zh') && flatpickr.l10ns.zh) {
+            return 'zh';
+        }
+        return 'default';
+    };
+
+    const pickerLocale = determinePickerLocale();
+    if (pickerLocale !== 'default' && flatpickr.l10ns[pickerLocale]) {
+        flatpickr.localize(flatpickr.l10ns[pickerLocale]);
+    }
+
+    // --- ECharts 自定义渲染函数 ---
     function renderItem(params, api) {
         const categoryIndex = api.value(0);
         const start = api.coord([api.value(1), categoryIndex]);
@@ -40,32 +97,37 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderUptimeHistory(data) {
+        if (!timelineChartContainer) {
+            return;
+        }
         if (!data || Object.keys(data).length === 0) {
-            timelineChart.clear();
-            timelineChartContainer.innerHTML = '<p>没有选中任何网站或当前时间范围无数据。</p>';
+            timelineChartContainer.style.height = '250px';
+            setChartEmptyState(timelineChart, timelineChartContainer, '没有选中任何网站或当前时间范围无数据。');
             return;
         }
 
+        setChartEmptyState(timelineChart, timelineChartContainer, null);
+
         const siteNames = Object.keys(data);
         const series = [];
-        const chartHeight = Math.max(150, siteNames.length * 40 + 80); // 动态高度，增加最小值
+        const chartHeight = Math.max(160, siteNames.length * 42 + 80);
         timelineChartContainer.style.height = `${chartHeight}px`;
-        if (timelineChart.isDisposed()) {
-            timelineChart = echarts.init(timelineChartContainer);
-        }
         timelineChart.resize();
 
         siteNames.forEach((siteName, index) => {
             const siteData = data[siteName].timeline_data.map(item => [index, item[0], item[1], item[2], item[3]]);
             series.push({
-                name: siteName, type: 'custom', renderItem: renderItem, itemStyle: { opacity: 0.8 },
-                encode: { x: [1, 2], y: 0 }, data: siteData
+                name: siteName,
+                type: 'custom',
+                renderItem,
+                itemStyle: { opacity: 0.85 },
+                encode: { x: [1, 2], y: 0 },
+                data: siteData
             });
         });
 
         const option = {
             tooltip: {
-                // 【核心修复】将 trigger 从 'axis' 改为 'item'
                 trigger: 'item',
                 axisPointer: {
                     type: 'shadow'
@@ -74,27 +136,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (!params || params.seriesType !== 'custom') {
                         return '';
                     }
-
                     const seriesName = params.seriesName;
                     const details = params.value[4];
-
-                    // 【新增】从数据中获取起止时间，并格式化
                     const startTime = new Date(params.value[1]);
                     const endTime = new Date(params.value[2]);
                     const timeFormat = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
                     const timeRangeStr = `${startTime.toLocaleTimeString('zh-CN', timeFormat)} - ${endTime.toLocaleTimeString('zh-CN', timeFormat)}`;
-                    return `<strong>${seriesName}</strong><br/>
-                            时间: ${timeRangeStr}<br/>
-                            ${details}`;
+                    return `<strong>${seriesName}</strong><br/>时间: ${timeRangeStr}<br/>${details}`;
                 }
             },
-
             dataZoom: [
                 {
                     type: 'slider',
                     filterMode: 'weakFilter',
                     showDataShadow: false,
-                    bottom: 10,
+                    bottom: 6,
                     height: 24,
                     borderColor: 'transparent',
                     backgroundColor: '#e2e2e2',
@@ -106,7 +162,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     moveOnMouseMove: false
                 }
             ],
-            grid: { top: 10, left: 100, right: 20, bottom: 60 },
+            grid: { top: 25, left: 120, right: 30, bottom: 90 },
             xAxis: {
                 type: 'time',
                 min: new Date(currentParams.start_iso),
@@ -118,104 +174,294 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             },
             yAxis: { type: 'category', data: siteNames, axisLabel: { interval: 0 } },
-            series: series
+            series
         };
         timelineChart.setOption(option, true);
     }
-    // --- 【新增】恢复 renderComparisonCharts 函数 ---
+
     function renderComparisonCharts(data) {
+        const siteKeys = Object.keys(data || {});
+        if (siteKeys.length === 0) {
+            setChartEmptyState(uptimeChart, uptimeChartContainer, '暂无可用率数据');
+            setChartEmptyState(responseTimeChart, responseTimeChartContainer, '暂无响应时间数据');
+            return;
+        }
+
         const uptimeCategories = [];
         const uptimeData = [];
         const responseTimeLegends = [];
         const responseTimeSeries = [];
         let allTimestamps = new Set();
-        Object.keys(data).forEach(siteName => {
-            if (data[siteName].response_times.timestamps.length > 0) {
-                data[siteName].response_times.timestamps.forEach(t => allTimestamps.add(t));
+
+        siteKeys.forEach(siteName => {
+            const siteData = data[siteName];
+            if (siteData.response_times.timestamps.length > 0) {
+                siteData.response_times.timestamps.forEach(t => allTimestamps.add(t));
             }
         });
+
         const sortedTimestamps = Array.from(allTimestamps).sort();
-        for (const siteName in data) {
+
+        siteKeys.forEach(siteName => {
             const siteData = data[siteName];
-            // 可用率图表数据
             if (siteData.overall_stats) {
-                uptimeCategories.push(siteName);
-                uptimeData.push(siteData.overall_stats.availability.toFixed(2));
+                const availability = siteData.overall_stats.availability;
+                if (Number.isFinite(availability)) {
+                    uptimeCategories.push(siteName);
+                    uptimeData.push(parseFloat(availability.toFixed(2)));
+                }
             }
-            // 响应时间图表数据
-            if (siteData.response_times.timestamps.length > 0) {
+
+            const rtData = siteData.response_times;
+            if (rtData.timestamps.length > 0) {
                 responseTimeLegends.push(siteName);
-                const rtData = siteData.response_times;
                 const seriesData = sortedTimestamps.map(ts => {
                     const index = rtData.timestamps.indexOf(ts);
                     return index > -1 ? rtData.times[index] : null;
                 });
-                responseTimeSeries.push({ name: siteName, type: 'line', smooth: true, data: seriesData, connectNulls: true });
+                responseTimeSeries.push({
+                    name: siteName,
+                    type: 'line',
+                    smooth: true,
+                    symbol: 'circle',
+                    symbolSize: 6,
+                    connectNulls: true,
+                    data: seriesData
+                });
             }
+        });
+
+        if (uptimeCategories.length === 0) {
+            setChartEmptyState(uptimeChart, uptimeChartContainer, '暂无可用率数据');
+        } else {
+            setChartEmptyState(uptimeChart, uptimeChartContainer, null);
+            uptimeChart.setOption({
+                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                grid: { top: 40, left: 60, right: 30, bottom: 70 },
+                xAxis: { type: 'category', data: uptimeCategories, axisLabel: { interval: 0 } },
+                yAxis: { type: 'value', max: 100, axisLabel: { formatter: '{value}%' } },
+                series: [{
+                    type: 'bar',
+                    barWidth: '45%',
+                    data: uptimeData,
+                    label: { show: true, position: 'top', formatter: '{c}%', color: '#333' },
+                    itemStyle: {
+                        color: function (params) {
+                            const value = parseFloat(params.value);
+                            if (value >= 99.9) return '#67C23A';
+                            if (value >= 99) return '#91cc75';
+                            if (value >= 95) return '#E6A23C';
+                            return '#F56C6C';
+                        }
+                    }
+                }]
+            }, true);
         }
 
-        // 渲染可用率图表 (代码和之前一样)
-        uptimeChart.setOption({
-            tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-            xAxis: { type: 'category', data: uptimeCategories },
-            yAxis: { type: 'value', max: 100, axisLabel: { formatter: '{value}%' } },
-            series: [{
-                type: 'bar', barWidth: '40%', data: uptimeData,
-                label: { show: true, position: 'top', formatter: '{c}%', color: '#333' },
-                itemStyle: {
-                    color: function (params) {
-                        const value = parseFloat(params.value);
-                        if (value >= 99.9) return '#67C23A';
-                        if (value >= 99) return '#91cc75';
-                        if (value >= 95) return '#E6A23C';
-                        return '#F56C6C';
-                    }
-                }
-            }]
-        }, true);
-        // 渲染响应时间图表 (代码和之前一样)
-        responseTimeChart.setOption({
-            tooltip: { trigger: 'axis' }, legend: { data: responseTimeLegends, top: 10 },
-            grid: { top: 60, left: 50, right: 50, bottom: 60 },
-            xAxis: { type: 'category', boundaryGap: false, data: sortedTimestamps },
-            yAxis: { type: 'value', name: '响应时间 (秒)' },
-            dataZoom: [{
-                type: 'slider',
-                zoomOnMouseWheel: false,
-                moveOnMouseWheel: false,
-                moveOnMouseMove: false
-            }],
-            series: responseTimeSeries
-        }, true);
+        if (responseTimeSeries.length === 0 || sortedTimestamps.length === 0) {
+            setChartEmptyState(responseTimeChart, responseTimeChartContainer, '暂无响应时间数据');
+        } else {
+            setChartEmptyState(responseTimeChart, responseTimeChartContainer, null);
+            const rotateLabels = sortedTimestamps.length > 10 ? -35 : 0;
+            responseTimeChart.setOption({
+                tooltip: { trigger: 'axis' },
+                legend: { data: responseTimeLegends, top: 10, type: 'scroll' },
+                grid: { top: 70, left: 60, right: 50, bottom: 100 },
+                xAxis: {
+                    type: 'category',
+                    boundaryGap: false,
+                    data: sortedTimestamps,
+                    axisLabel: { rotate: rotateLabels, hideOverlap: true }
+                },
+                yAxis: { type: 'value', name: '响应时间 (秒)', nameGap: 30 },
+                dataZoom: [
+                    {
+                        type: 'slider',
+                        bottom: 16,
+                        height: 24,
+                        zoomOnMouseWheel: false,
+                        moveOnMouseWheel: false,
+                        moveOnMouseMove: false
+                    },
+                    { type: 'inside' }
+                ],
+                series: responseTimeSeries
+            }, true);
+        }
     }
-    async function updateDashboard() {
-        const selectedSites = Array.from(document.querySelectorAll('#site-selector input:checked')).map(el => el.value);
-        if (selectedSites.length === 0) {
-            if (timelineChart && !timelineChart.isDisposed()) timelineChart.clear();
-            if (uptimeChart && !uptimeChart.isDisposed()) uptimeChart.clear();
-            if (responseTimeChart && !responseTimeChart.isDisposed()) responseTimeChart.clear();
+
+    function renderStatusDistribution(data) {
+        if (!statusDistributionChart || !statusDistributionChartContainer) {
             return;
         }
 
-        // 简化 loading
-        if (timelineChart && !timelineChart.isDisposed()) timelineChart.showLoading();
+        const siteKeys = Object.keys(data || {});
+        if (siteKeys.length === 0) {
+            setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '暂无状态分布数据');
+            return;
+        }
+
+        const totals = { up: 0, slow: 0, down: 0, nodata: 0 };
+        siteKeys.forEach(siteName => {
+            const segments = data[siteName].timeline_data || [];
+            segments.forEach(segment => {
+                const start = segment[0] || 0;
+                const end = segment[1] || 0;
+                const status = segment[2];
+                const duration = Math.max(0, end - start);
+                if (!duration) return;
+                if (status === 1) totals.up += duration;
+                else if (status === 2) totals.slow += duration;
+                else if (status === 3) totals.down += duration;
+                else totals.nodata += duration;
+            });
+        });
+
+        const totalDuration = Object.values(totals).reduce((acc, value) => acc + value, 0);
+        if (totalDuration <= 0) {
+            setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '暂无状态分布数据');
+            return;
+        }
+
+        setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, null);
+
+        const pieData = [];
+        if (totals.up > 0) pieData.push({ name: '正常', value: totals.up, itemStyle: { color: '#67C23A' } });
+        if (totals.slow > 0) pieData.push({ name: '访问过慢', value: totals.slow, itemStyle: { color: '#E6A23C' } });
+        if (totals.down > 0) pieData.push({ name: '无法访问', value: totals.down, itemStyle: { color: '#F56C6C' } });
+        if (totals.nodata > 0) pieData.push({ name: '无数据', value: totals.nodata, itemStyle: { color: '#C0CCDA' } });
+
+        statusDistributionChart.setOption({
+            tooltip: {
+                trigger: 'item',
+                formatter: params => {
+                    const percent = Number.isFinite(params.percent) ? params.percent.toFixed(1) : '0.0';
+                    return `${params.marker}${params.name}<br/>占比：${percent}%<br/>时长：${formatDuration(params.value)}`;
+                }
+            },
+            legend: {
+                orient: 'vertical',
+                right: 10,
+                top: 'middle'
+            },
+            series: [{
+                name: '状态时长分布',
+                type: 'pie',
+                radius: ['45%', '70%'],
+                center: ['40%', '50%'],
+                data: pieData,
+                label: {
+                    formatter: info => `${info.name}\n${Number(info.percent).toFixed(1)}%`
+                },
+                emphasis: {
+                    scale: true,
+                    scaleSize: 6
+                }
+            }]
+        }, true);
+    }
+
+    function updateSummaryCards(data, selectedSites) {
+        if (!summaryElements.siteCount) {
+            return;
+        }
+        const selectedCount = selectedSites.length;
+        summaryElements.siteCount.textContent = String(selectedCount);
+
+        if (!data || Object.keys(data).length === 0) {
+            summaryElements.avgUptime.textContent = '--';
+            summaryElements.avgResponse.textContent = '--';
+            summaryElements.incidents.textContent = selectedCount > 0 ? '0' : '--';
+            if (summaryElements.incidentHint) {
+                summaryElements.incidentHint.textContent = '宕机 + 性能告警';
+            }
+            return;
+        }
+
+        let availabilitySum = 0;
+        let availabilityCount = 0;
+        let responseSum = 0;
+        let responseCount = 0;
+        let downSegments = 0;
+        let slowSegments = 0;
+
+        Object.values(data).forEach(siteData => {
+            const availability = siteData.overall_stats?.availability;
+            if (Number.isFinite(availability)) {
+                availabilitySum += availability;
+                availabilityCount += 1;
+            }
+            const avgResponse = siteData.overall_stats?.avg_response_time;
+            if (Number.isFinite(avgResponse) && avgResponse > 0) {
+                responseSum += avgResponse;
+                responseCount += 1;
+            }
+            (siteData.timeline_data || []).forEach(segment => {
+                if (segment[2] === 3) downSegments += 1;
+                if (segment[2] === 2) slowSegments += 1;
+            });
+        });
+
+        const avgAvailability = availabilityCount ? (availabilitySum / availabilityCount) : null;
+        const avgResponse = responseCount ? (responseSum / responseCount) : null;
+        const totalIncidents = downSegments + slowSegments;
+
+        summaryElements.avgUptime.textContent = avgAvailability !== null ? `${avgAvailability.toFixed(2)}%` : '--';
+        summaryElements.avgResponse.textContent = avgResponse !== null ? avgResponse.toFixed(2) : '0.00';
+        summaryElements.incidents.textContent = String(totalIncidents);
+
+        if (summaryElements.incidentHint) {
+            summaryElements.incidentHint.textContent = totalIncidents > 0 ? `宕机：${downSegments} · 慢：${slowSegments}` : '宕机 + 性能告警';
+        }
+    }
+
+    async function updateDashboard() {
+        const selectedSites = Array.from(document.querySelectorAll('#site-selector input:checked')).map(el => el.value);
+        updateSummaryCards(null, selectedSites);
+
+        if (selectedSites.length === 0) {
+            setChartEmptyState(timelineChart, timelineChartContainer, '请选择至少一个网站以查看历史数据');
+            setChartEmptyState(uptimeChart, uptimeChartContainer, '请选择至少一个网站以查看可用率');
+            setChartEmptyState(responseTimeChart, responseTimeChartContainer, '请选择至少一个网站以查看响应时间');
+            if (statusDistributionChart && statusDistributionChartContainer) {
+                setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '请选择至少一个网站以查看状态分布');
+            }
+            return;
+        }
+
+        setChartEmptyState(timelineChart, timelineChartContainer, null);
+        timelineChart.showLoading();
+        if (statusDistributionChart && statusDistributionChartContainer) {
+            setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, null);
+            statusDistributionChart.showLoading('');
+        }
 
         const siteParams = selectedSites.map(s => `sites=${encodeURIComponent(s)}`).join('&');
         const timeParams = `start_time=${currentParams.start_iso}&end_time=${currentParams.end_iso}`;
 
         try {
             const response = await fetch(`/api/history?${siteParams}&${timeParams}`);
-            if (!response.ok) throw new Error(`API 请求失败: ${response.status}`);
+            if (!response.ok) {
+                throw new Error(`API 请求失败: ${response.status}`);
+            }
             const data = await response.json();
-
-            // 【修改】同时调用两个渲染函数
+            updateSummaryCards(data, selectedSites);
             renderUptimeHistory(data);
             renderComparisonCharts(data);
-
+            renderStatusDistribution(data);
         } catch (error) {
             console.error(error);
+            setChartEmptyState(timelineChart, timelineChartContainer, '数据加载失败，请稍后重试');
+            setChartEmptyState(uptimeChart, uptimeChartContainer, '数据加载失败');
+            setChartEmptyState(responseTimeChart, responseTimeChartContainer, '数据加载失败');
+            if (statusDistributionChart) {
+                setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '数据加载失败');
+            }
         } finally {
-            if (timelineChart && !timelineChart.isDisposed()) timelineChart.hideLoading();
+            timelineChart.hideLoading();
+            if (statusDistributionChart) {
+                statusDistributionChart.hideLoading();
+            }
         }
     }
 
@@ -250,6 +496,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }).join('');
     }
 
+    const toLocalISOString = dt =>
+        `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}T${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+
     function setAndTriggerUpdate(startDate, endDate) {
         currentParams = {
             start_iso: toLocalISOString(startDate),
@@ -267,17 +516,24 @@ document.addEventListener('DOMContentLoaded', () => {
         const applyCustomRangeBtn = document.getElementById('apply-custom-range');
         const clearCustomRangeBtn = document.getElementById('clear-custom-range');
 
-        rangePicker = flatpickr(customRangeStartInput, {
+        const pickerOptions = {
             enableTime: true,
             time_24hr: true,
-            dateFormat: "Y-m-d H:i",
+            dateFormat: 'Y-m-d H:i',
             minDate: earliestDate,
-            maxDate: "today",
-            plugins: [new rangePlugin({ input: "#custom-range-end" })],
+            maxDate: 'today',
+            minuteIncrement: 5,
+            plugins: [new rangePlugin({ input: '#custom-range-end' })],
             onChange: (selectedDates) => {
                 applyCustomRangeBtn.disabled = selectedDates.length !== 2;
             }
-        });
+        };
+
+        if (pickerLocale !== 'default') {
+            pickerOptions.locale = pickerLocale;
+        }
+
+        rangePicker = flatpickr(customRangeStartInput, pickerOptions);
 
         applyCustomRangeBtn.addEventListener('click', () => {
             const selectedDates = rangePicker.selectedDates;
@@ -359,4 +615,11 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelector('#time-range-selector button.active').click();
     updateStatusWall(initialStatuses);
     setInterval(() => updateStatusWall(), 15000);
+
+    window.addEventListener('resize', () => {
+        if (timelineChart && !timelineChart.isDisposed()) timelineChart.resize();
+        if (uptimeChart && !uptimeChart.isDisposed()) uptimeChart.resize();
+        if (responseTimeChart && !responseTimeChart.isDisposed()) responseTimeChart.resize();
+        if (statusDistributionChart && !statusDistributionChart.isDisposed()) statusDistributionChart.resize();
+    });
 });
