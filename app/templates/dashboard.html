@@ -40,16 +40,23 @@
                 <button id="select-all" class="control-btn">全选</button>
                 <button id="deselect-all" class="control-btn">全不选</button>
             </div>
-            <div class="control-group">
+            <div class="control-group control-group--time">
                 <label class="group-title">选择时间范围:</label>
                 <div class="options-wrapper" id="time-range-selector">
-                    <button data-range="1h" class="time-btn active">1小时</button>
-                    <button data-range="6h" class="time-btn">6小时</button>
-                    <button data-range="24h" class="time-btn">1天</button>
-                    <button data-range="7d" class="time-btn">7天</button>
-                    <button data-range="1m" class="time-btn">1个月</button>
+                    <button data-range="30m" class="time-btn">30分钟</button>
+                    <button data-range="2h" class="time-btn">2小时</button>
+                    <button data-range="12h" class="time-btn active">12小时</button>
+                    <button data-range="3d" class="time-btn">3天</button>
+                    <button data-range="14d" class="time-btn">14天</button>
                 </div>
-                <input type="text" id="custom-time-range" placeholder="或选择自定义日期范围">
+                <div class="custom-range">
+                    <input type="text" id="custom-range-start" placeholder="开始时间">
+                    <span class="range-separator">至</span>
+                    <input type="text" id="custom-range-end" placeholder="结束时间">
+                    <button id="apply-custom-range" class="control-btn" disabled>应用</button>
+                    <button id="clear-custom-range" class="control-btn control-btn--ghost">清除</button>
+                </div>
+                <p class="control-hint">最多可查询过去 {{ DATA_RETENTION_DAYS }} 天内的数据，也可以通过下方自定义时间段进行对比。</p>
             </div>
         </div>
         <div id="uptime-tooltip" style="display: none; position: fixed; pointer-events: none;"></div>
@@ -83,6 +90,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.3.3/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/plugins/rangePlugin.js"></script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 </body>
 </html>

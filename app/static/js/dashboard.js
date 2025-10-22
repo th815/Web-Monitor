@@ -12,7 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const initialStatuses = window.INITIAL_STATUSES;
     const dataRetentionDays = window.DATA_RETENTION_DAYS;
     let currentParams = {};
-    let flatpickrInstance;
+    let rangePicker;
 
     const STATUS_COLORS = {
         0: '#f0f0f0', 1: '#91cc75', 2: '#fac858', 3: '#ee6666'
@@ -259,33 +259,87 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function initializeControls() {
-        const minDate = new Date();
-        minDate.setDate(minDate.getDate() - dataRetentionDays);
-        flatpickrInstance = flatpickr("#custom-time-range", {
-            mode: "range", dateFormat: "Y-m-d H:i", enableTime: true, time_24hr: true,
-            minDate: minDate, maxDate: "today",
+        const earliestDate = new Date();
+        earliestDate.setDate(earliestDate.getDate() - dataRetentionDays);
+
+        const customRangeStartInput = document.getElementById('custom-range-start');
+        const customRangeEndInput = document.getElementById('custom-range-end');
+        const applyCustomRangeBtn = document.getElementById('apply-custom-range');
+        const clearCustomRangeBtn = document.getElementById('clear-custom-range');
+
+        rangePicker = flatpickr(customRangeStartInput, {
+            enableTime: true,
+            time_24hr: true,
+            dateFormat: "Y-m-d H:i",
+            minDate: earliestDate,
+            maxDate: "today",
+            plugins: [new rangePlugin({ input: "#custom-range-end" })],
             onChange: (selectedDates) => {
-                if (selectedDates.length === 2) {
-                    document.querySelector('#time-range-selector .active')?.classList.remove('active');
-                    setAndTriggerUpdate(selectedDates[0], selectedDates[1]);
-                }
+                applyCustomRangeBtn.disabled = selectedDates.length !== 2;
             }
+        });
+
+        applyCustomRangeBtn.addEventListener('click', () => {
+            const selectedDates = rangePicker.selectedDates;
+            if (selectedDates.length === 2) {
+                let [start, end] = selectedDates;
+                if (start > end) {
+                    [start, end] = [end, start];
+                }
+                if (start < earliestDate) {
+                    start = new Date(earliestDate.getTime());
+                }
+                document.querySelector('#time-range-selector .active')?.classList.remove('active');
+                setAndTriggerUpdate(start, end);
+            }
+        });
+
+        clearCustomRangeBtn.addEventListener('click', () => {
+            rangePicker.clear();
+            customRangeEndInput.value = '';
+            applyCustomRangeBtn.disabled = true;
         });
 
         document.getElementById('time-range-selector').addEventListener('click', (e) => {
             if (e.target.tagName !== 'BUTTON') return;
             const range = e.target.dataset.range;
+            if (!range) return;
             const end = new Date();
-            let start = new Date();
-            const [num, unit] = [parseInt(range.slice(0, -1)), range.slice(-1)];
+            let start = new Date(end.getTime());
+            const match = range.match(/^(\d+)([mhdwM])$/);
+            if (!match) return;
+            const value = parseInt(match[1], 10);
+            const unit = match[2];
 
-            if (unit === 'h') start.setHours(start.getHours() - num);
-            if (unit === 'd') start.setDate(start.getDate() - num);
-            if (unit === 'm') start.setMonth(start.getMonth() - num);
+            switch (unit) {
+                case 'm':
+                    start.setMinutes(start.getMinutes() - value);
+                    break;
+                case 'h':
+                    start.setHours(start.getHours() - value);
+                    break;
+                case 'd':
+                    start.setDate(start.getDate() - value);
+                    break;
+                case 'w':
+                    start.setDate(start.getDate() - value * 7);
+                    break;
+                case 'M':
+                    start.setMonth(start.getMonth() - value);
+                    break;
+                default:
+                    break;
+            }
+
+            if (start < earliestDate) {
+                start = new Date(earliestDate.getTime());
+            }
 
             document.querySelector('#time-range-selector .active')?.classList.remove('active');
             e.target.classList.add('active');
-            flatpickrInstance.clear();
+            rangePicker.clear();
+            customRangeEndInput.value = '';
+            applyCustomRangeBtn.disabled = true;
             setAndTriggerUpdate(start, end);
         });
 

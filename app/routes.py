@@ -2,16 +2,28 @@
 import datetime
 import json
 from datetime import timezone
-from collections import defaultdict
 from flask import Blueprint, jsonify, render_template, current_app, flash, url_for, session, redirect, request
 from flask_admin import AdminIndexView, BaseView, expose
 from flask_admin.menu import MenuLink
 from flask_admin.contrib.sqla import ModelView
 from flask_login import current_user, login_user, logout_user, login_required
-from .extensions import db
-from .models import HealthCheckLog, User, MonitoredSite
+
+from .extensions import db, scheduler
+from .forms import (
+    ChangePasswordForm,
+    LoginForm,
+    MonitoringSettingsForm,
+    MonitoredSiteForm,
+    PasswordResetForm,
+)
+from .models import (
+    HealthCheckLog,
+    MonitoringConfig,
+    MonitoredSite,
+    PasswordResetToken,
+    User,
+)
 from .services import site_statuses, status_lock
-from .forms import LoginForm, MonitoredSiteForm, ChangePasswordForm
 
 # --- 【新增】时区转换和格式化帮助函数 ---
 def to_gmt8(utc_dt):
@@ -38,23 +50,33 @@ class MyAdminIndexView(AdminIndexView):
     def index(self):
         return self.render('admin/index.html', username=current_user.username)
     @expose('/change-password', methods=['GET', 'POST'])
+    @login_required
     def change_password(self):
         form = ChangePasswordForm()
         if form.validate_on_submit():
             if not current_user.check_password(form.current_password.data):
-                flash('您当前的密码不正确，请重试。', 'danger')
-                return redirect(url_for('.change_password'))
-
-            current_user.set_password(form.new_password.data)
-            db.session.commit()
-
-            flash('您的密码已成功更新！', 'success')
-            return redirect(url_for('.index'))
+                form.current_password.errors.append('当前密码不正确，请重试。')
+                flash('请修正表单中的错误后再提交。', 'danger')
+            elif form.new_password.data == form.current_password.data:
+                form.new_password.errors.append('新密码不能与当前密码相同。')
+                flash('请修正表单中的错误后再提交。', 'danger')
+            else:
+                try:
+                    current_user.set_password(form.new_password.data)
+                    db.session.commit()
+                except Exception as exc:
+                    db.session.rollback()
+                    current_app.logger.exception('更新密码失败: %s', exc)
+                    flash('保存新密码时出现错误，请稍后再试。', 'danger')
+                else:
+                    flash('您的密码已成功更新！', 'success')
+                    return redirect(url_for('.index'))
+        elif form.is_submitted():
+            flash('请修正表单中的错误后再提交。', 'danger')
 
         return self.render('admin/change_password.html', form=form)
     @expose('/login', methods=['GET', 'POST'])
     def login(self):
-        # 如果用户已经登录，直接带他们去后台主页，避免看到登录页
         if current_user.is_authenticated:
             return redirect(url_for('.index'))
 
@@ -62,21 +84,76 @@ class MyAdminIndexView(AdminIndexView):
         if form.validate_on_submit():
             user = User.query.filter_by(username=form.username.data).first()
             if user is None or not user.check_password(form.password.data):
-                flash('无效的用户名或密码')
-                # 这样即使用户名密码错误，也停留在登录页
-                return redirect(url_for('.login'))
-            login_user(user, remember=form.remember_me.data)
-
-            # 登录成功后，跳转到后台主页
-            return redirect(url_for('.index'))
+                flash('无效的用户名或密码。', 'danger')
+            else:
+                login_user(user, remember=form.remember_me.data)
+                flash('登录成功，欢迎回来！', 'success')
+                return redirect(url_for('.index'))
+        elif form.is_submitted():
+            flash('请填写用户名和密码。', 'danger')
 
         return self.render('admin/login.html', form=form)
+
+    @expose('/forgot-password', methods=['GET', 'POST'])
+    def forgot_password(self):
+        if current_user.is_authenticated:
+            return redirect(url_for('.index'))
+
+        form = PasswordResetForm()
+        if form.validate_on_submit():
+            user = User.query.filter_by(username=form.username.data).first()
+            if not user:
+                flash('未找到对应的用户，请确认用户名是否正确。', 'danger')
+            else:
+                tokens = (
+                    PasswordResetToken.query.filter_by(user_id=user.id, used=False)
+                    .order_by(PasswordResetToken.created_at.desc())
+                    .all()
+                )
+                if not tokens:
+                    flash('当前没有可用的重置令牌，请在服务器上生成新的令牌。', 'warning')
+                else:
+                    expired_token_updated = False
+                    matching_token = None
+                    for token in tokens:
+                        if token.is_expired():
+                            if not token.used:
+                                token.used = True
+                                expired_token_updated = True
+                            continue
+                        if token.verify(form.reset_token.data):
+                            matching_token = token
+                            break
+                    if matching_token:
+                        try:
+                            user.set_password(form.new_password.data)
+                            matching_token.mark_used()
+                            db.session.commit()
+                        except Exception as exc:
+                            db.session.rollback()
+                            current_app.logger.exception('重置密码失败: %s', exc)
+                            flash('重置密码时出现错误，请稍后再试。', 'danger')
+                        else:
+                            flash('密码已成功重置，请使用新密码登录。', 'success')
+                            return redirect(url_for('.login'))
+                    else:
+                        if expired_token_updated:
+                            try:
+                                db.session.commit()
+                            except Exception as exc:
+                                db.session.rollback()
+                                current_app.logger.exception('更新令牌状态失败: %s', exc)
+                        flash('重置令牌无效或已过期，请在服务器上生成新的令牌。', 'danger')
+        elif form.is_submitted():
+            flash('请修正表单中的错误后再提交。', 'danger')
+
+        return self.render('admin/forgot_password.html', form=form)
 
     @expose('/logout')
     @login_required  # 最好也给 logout 加上保护
     def logout(self):
         logout_user()
-        flash('您已成功退出登录。')
+        flash('您已成功退出登录。', 'info')
         # 退出后，跳转回登录页面
         return redirect(url_for('.login'))
 
@@ -102,6 +179,56 @@ class ThemeSettingsView(BaseView):
     # 只有登录用户才能访问这个视图
     def is_accessible(self):
         return current_user.is_authenticated
+
+
+class MonitoringSettingsView(BaseView):
+    menu_icon_type = 'fa'
+    menu_icon_value = 'fa-sliders-h'
+
+    @expose('/', methods=['GET', 'POST'])
+    def index(self):
+        if not current_user.is_authenticated:
+            return redirect(url_for('admin.login', next=request.url))
+
+        form = MonitoringSettingsForm()
+        config_record = MonitoringConfig.ensure(current_app.config)
+
+        if not form.is_submitted():
+            config_record.populate_form(form)
+
+        if form.validate_on_submit():
+            try:
+                config_record.update_from_form(form)
+                db.session.commit()
+            except Exception as exc:
+                db.session.rollback()
+                current_app.logger.exception('保存监控参数失败: %s', exc)
+                flash('保存监控参数失败，请稍后重试。', 'danger')
+            else:
+                config_record.apply_to_config(current_app.config)
+                try:
+                    job = scheduler.get_job('check_health_job')
+                    if job:
+                        job.reschedule(trigger='interval', seconds=current_app.config['MONITOR_INTERVAL_SECONDS'])
+                except Exception as exc:
+                    current_app.logger.warning('重新调度健康检查任务失败: %s', exc)
+                flash('监控参数已更新。', 'success')
+                return redirect(url_for('.index'))
+        elif form.is_submitted():
+            flash('请修正表单中的错误后再提交。', 'danger')
+
+        return self.render(
+            'admin/settings.html',
+            form=form,
+        )
+
+    def is_accessible(self):
+        return current_user.is_authenticated
+
+    def _handle_view(self, name, **kwargs):
+        if not self.is_accessible():
+            return redirect(url_for('admin.login', next=request.url))
+
 
 # 创建一个安全的模型视图基类，所有需要登录才能访问的视图都应继承它
 class SecureModelView(ModelView):

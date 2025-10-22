@@ -1,8 +1,13 @@
 # web-monitor/app/commands.py
+import datetime
+import secrets
+
 import click
 from flask.cli import with_appcontext
+from werkzeug.security import generate_password_hash
+
 from .extensions import db
-from .models import User, MonitoredSite
+from .models import MonitoredSite, PasswordResetToken, User
 from .services import check_website_health  # 【新增】导入健康检查函数
 
 
@@ -55,3 +60,47 @@ def init_db_command():
     click.echo('请在首次登录后立即修改密码！')
     click.echo('=' * 40)
 
+
+@click.command('create-reset-token')
+@click.argument('username')
+@click.option('--expires-in', default=3600, show_default=True, help='令牌有效期（秒）')
+@with_appcontext
+def create_reset_token_command(username, expires_in):
+    """为指定用户创建一次性密码重置令牌。"""
+    if expires_in <= 0:
+        raise click.BadParameter('expires-in 必须大于 0', param='expires_in')
+
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        click.echo(f'未找到用户名为 {username} 的用户。')
+        return
+
+    now = datetime.datetime.utcnow()
+    expiration = now + datetime.timedelta(seconds=expires_in)
+
+    # 让已有的活动令牌失效，确保同一时间仅有一个有效令牌
+    active_tokens = PasswordResetToken.query.filter_by(user_id=user.id, used=False).all()
+    for token in active_tokens:
+        if token.is_expired():
+            token.used = True
+        else:
+            token.used = True
+    raw_token = secrets.token_urlsafe(24)
+    token_entry = PasswordResetToken(
+        user=user,
+        token_hash=generate_password_hash(raw_token),
+        expires_at=expiration,
+    )
+    db.session.add(token_entry)
+    try:
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        raise click.ClickException(f'创建重置令牌失败: {exc}')
+
+    click.echo('=' * 60)
+    click.echo(f'用户 {username} 的一次性重置令牌已创建。')
+    click.echo(f'令牌将于 (UTC) {expiration.strftime("%Y-%m-%d %H:%M:%S")} 过期。')
+    click.echo('请妥善保管并在忘记密码页面输入以下令牌：')
+    click.echo(raw_token)
+    click.echo('=' * 60)
