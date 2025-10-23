@@ -526,70 +526,89 @@ def get_history():
         end_time_utc = end_time_naive.astimezone(timezone.utc)
     except (ValueError, TypeError):
         return jsonify({"error": "无效的时间格式或参数缺失"}), 400
+    #查询所选站点中最早的数据时间
+    if selected_sites:
+        earliest_log = db.session.query(HealthCheckLog).filter(
+            HealthCheckLog.site_name.in_(selected_sites)
+        ).order_by(HealthCheckLog.timestamp.asc()).first()
+
+        if earliest_log:
+            earliest_data_time = earliest_log.timestamp.replace(tzinfo=timezone.utc)
+            # 如果查询开始时间早于最早数据时间，自动调整
+            if start_time_utc < earliest_data_time:
+                original_start = start_time_utc
+                start_time_utc = earliest_data_time
+                current_app.logger.info(
+                    f"[API] 时间范围自动调整: {original_start} -> {start_time_utc} "
+                    f"(最早数据时间)"
+                )
     results = {}
     monitor_interval = datetime.timedelta(seconds=current_app.config.get('MONITOR_INTERVAL_SECONDS', 60))
+
     for site in selected_sites:
         logs = db.session.query(HealthCheckLog).filter(
             HealthCheckLog.site_name == site,
             HealthCheckLog.timestamp.between(start_time_utc, end_time_utc)
         ).order_by(HealthCheckLog.timestamp.asc()).all()
+
         timeline_data = []
 
         def get_simple_status(log):
             if log.status == '无法访问': return 'down'
             if log.status == '访问过慢': return 'slow'
             return 'up'
+
         if not logs:
-            timeline_data.append([int(start_time_utc.timestamp() * 1000), int(end_time_utc.timestamp() * 1000), 0, "该时间段内无数据"])
+            timeline_data.append([
+                int(start_time_utc.timestamp() * 1000),
+                int(end_time_utc.timestamp() * 1000),
+                0,
+                "该时间段内无数据"
+            ])
         else:
             i = 0
             while i < len(logs):
                 current_log = logs[i]
                 current_status = get_simple_status(current_log)
+
                 if current_status == 'down':
                     start_ts = int(current_log.timestamp.replace(tzinfo=timezone.utc).timestamp() * 1000)
                     end_ts = start_ts + int(monitor_interval.total_seconds() * 1000)
-
-                    # 【核心修改】构建更详细的宕机原因
-                    reason = "未知错误" # 默认值
+                    reason = "未知错误"
                     if current_log.http_status_code and current_log.http_status_code >= 400:
                         reason = f"HTTP {current_log.http_status_code}"
                     elif current_log.error_detail:
                         reason = current_log.error_detail
-
                     details = f"状态: DOWN<br>原因: {reason}"
                     timeline_data.append([start_ts, end_ts, 3, details])
                     i += 1
                     continue
+
                 j = i
                 while j < len(logs) and get_simple_status(logs[j]) == current_status:
-                    if j > i and (logs[j].timestamp - logs[j-1].timestamp) > monitor_interval * 1.5:
+                    if j > i and (logs[j].timestamp - logs[j - 1].timestamp) > monitor_interval * 1.5:
                         break
                     j += 1
-
                 segment_logs = logs[i:j]
                 start_log = segment_logs[0]
-
-                # 结束时间是下一个不同状态的log的开始时间，或者查询范围的结束
                 next_event_time = logs[j].timestamp if j < len(logs) else end_time_utc
                 end_time = next_event_time.replace(tzinfo=timezone.utc)
                 start_ts = int(start_log.timestamp.replace(tzinfo=timezone.utc).timestamp() * 1000)
                 end_ts = int(end_time.timestamp() * 1000)
-
                 status_map = {'up': 1, 'slow': 2}
                 duration = end_time - start_log.timestamp.replace(tzinfo=timezone.utc)
                 duration_str = str(duration).split('.')[0]
                 avg_resp = sum(l.response_time_seconds for l in segment_logs) / len(segment_logs)
-
                 details = f"状态: {current_status.upper()}<br>持续: {duration_str}<br>平均响应: {avg_resp:.3f}s"
                 timeline_data.append([start_ts, end_ts, status_map[current_status], details])
-
                 i = j
+
         # --- 为其他图表准备数据 ---
         up_count = sum(1 for log in logs if log.status in ['正常', '访问过慢'])
         availability = (up_count / len(logs) * 100) if logs else 0
         valid_times = [log.response_time_seconds for log in logs if log.response_time_seconds is not None]
         avg_response_time = sum(valid_times) / len(valid_times) if valid_times else 0
+
         results[site] = {
             "timeline_data": timeline_data,
             "overall_stats": {
@@ -601,5 +620,4 @@ def get_history():
                 "times": [log.response_time_seconds for log in logs]
             }
         }
-
     return jsonify(results)

@@ -98,7 +98,13 @@ class MonitoringSettingsForm(FlaskForm):
     )
     submit = SubmitField('保存设置')
 
-
+class NotificationSettingsForm(FlaskForm):
+    # 企业微信开关
+    qywechat_enabled = BooleanField('启用企业微信通知')
+    qywechat_webhook_url = StringField(
+        '企业微信 Webhook 地址',
+        validators=[Optional(), URL(message='请输入有效的 URL 地址')]
+    )
 class NotificationSettingsForm(FlaskForm):
     webhook_enabled = BooleanField('启用 Webhook 通知')
     webhook_url = StringField(

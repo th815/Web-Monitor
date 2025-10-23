@@ -304,75 +304,102 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderStatusDistribution(data) {
-        if (!statusDistributionChart || !statusDistributionChartContainer) {
-            return;
-        }
+    if (!statusDistributionChart || !statusDistributionChartContainer) {
+        return;
+    }
+    const siteKeys = Object.keys(data || {});
+    if (siteKeys.length === 0) {
+        setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '暂无状态分布数据');
+        return;
+    }
+    const allSiteTotals = [];
 
-        const siteKeys = Object.keys(data || {});
-        if (siteKeys.length === 0) {
-            setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '暂无状态分布数据');
-            return;
-        }
+    siteKeys.forEach(siteName => {
+        const siteTotals = { up: 0, slow: 0, down: 0, nodata: 0 };
+        const segments = data[siteName].timeline_data || [];
 
-        const totals = { up: 0, slow: 0, down: 0, nodata: 0 };
-        siteKeys.forEach(siteName => {
-            const segments = data[siteName].timeline_data || [];
-            segments.forEach(segment => {
-                const start = segment[0] || 0;
-                const end = segment[1] || 0;
-                const status = segment[2];
-                const duration = Math.max(0, end - start);
-                if (!duration) return;
-                if (status === 1) totals.up += duration;
-                else if (status === 2) totals.slow += duration;
-                else if (status === 3) totals.down += duration;
-                else totals.nodata += duration;
-            });
+        segments.forEach(segment => {
+            const start = segment[0] || 0;
+            const end = segment[1] || 0;
+            const status = segment[2];
+            const duration = Math.max(0, end - start);
+            if (!duration) return;
+
+            if (status === 1) siteTotals.up += duration;
+            else if (status === 2) siteTotals.slow += duration;
+            else if (status === 3) siteTotals.down += duration;
+            else siteTotals.nodata += duration;
         });
 
-        const totalDuration = Object.values(totals).reduce((acc, value) => acc + value, 0);
-        if (totalDuration <= 0) {
-            setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '暂无状态分布数据');
-            return;
-        }
+        allSiteTotals.push(siteTotals);
+    });
+    // 计算平均时长
+    const avgTotals = { up: 0, slow: 0, down: 0, nodata: 0 };
+    allSiteTotals.forEach(totals => {
+        avgTotals.up += totals.up;
+        avgTotals.slow += totals.slow;
+        avgTotals.down += totals.down;
+        avgTotals.nodata += totals.nodata;
+    });
 
-        setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, null);
-
-        const pieData = [];
-        if (totals.up > 0) pieData.push({ name: '正常', value: totals.up, itemStyle: { color: '#67C23A' } });
-        if (totals.slow > 0) pieData.push({ name: '访问过慢', value: totals.slow, itemStyle: { color: '#E6A23C' } });
-        if (totals.down > 0) pieData.push({ name: '无法访问', value: totals.down, itemStyle: { color: '#F56C6C' } });
-        if (totals.nodata > 0) pieData.push({ name: '无数据', value: totals.nodata, itemStyle: { color: '#C0CCDA' } });
-
-        statusDistributionChart.setOption({
-            tooltip: {
-                trigger: 'item',
-                formatter: params => {
-                    const percent = Number.isFinite(params.percent) ? params.percent.toFixed(1) : '0.0';
-                    return `${params.marker}${params.name}<br/>占比：${percent}%<br/>时长：${formatDuration(params.value)}`;
-                }
-            },
-            legend: {
-                orient: 'horizontal',
-                bottom: 10,
-                left: 'center'
-            },
-            series: [{
-                name: '状态时长分布',
-                type: 'pie',
-                radius: ['40%', '65%'],
-                center: ['50%', '45%'],
-                data: pieData,
-                label: {
-                    formatter: info => `${info.name}\n${Number(info.percent).toFixed(1)}%`
-                },
-                emphasis: {
-                    scale: true,
-                    scaleSize: 8
-                }
-            }]
-        }, true);
+    // 取平均值
+    const siteCount = allSiteTotals.length;
+    if (siteCount > 0) {
+        avgTotals.up /= siteCount;
+        avgTotals.slow /= siteCount;
+        avgTotals.down /= siteCount;
+        avgTotals.nodata /= siteCount;
     }
+    const totalDuration = Object.values(avgTotals).reduce((acc, value) => acc + value, 0);
+    if (totalDuration <= 0) {
+        setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '暂无状态分布数据');
+        return;
+    }
+    setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, null);
+    const pieData = [];
+    if (avgTotals.up > 0) pieData.push({ name: '正常', value: avgTotals.up, itemStyle: { color: '#67C23A' } });
+    if (avgTotals.slow > 0) pieData.push({ name: '访问过慢', value: avgTotals.slow, itemStyle: { color: '#E6A23C' } });
+    if (avgTotals.down > 0) pieData.push({ name: '无法访问', value: avgTotals.down, itemStyle: { color: '#F56C6C' } });
+    if (avgTotals.nodata > 0) pieData.push({ name: '无数据', value: avgTotals.nodata, itemStyle: { color: '#C0CCDA' } });
+    statusDistributionChart.setOption({
+        title: {
+            text: siteCount > 1 ? `状态时长分布（${siteCount}个站点平均）` : '状态时长分布',
+            left: 'center',
+            top: 10,
+            textStyle: {
+                fontSize: 16,
+                fontWeight: 'normal'
+            }
+        },
+        tooltip: {
+            trigger: 'item',
+            formatter: params => {
+                const percent = Number.isFinite(params.percent) ? params.percent.toFixed(1) : '0.0';
+                return `${params.marker}${params.name}<br/>占比：${percent}%<br/>平均时长：${formatDuration(params.value)}`;
+            }
+        },
+        legend: {
+            orient: 'horizontal',
+            bottom: 10,
+            left: 'center'
+        },
+        series: [{
+            name: '状态时长分布',
+            type: 'pie',
+            radius: ['40%', '65%'],
+            center: ['50%', '50%'],
+            data: pieData,
+            label: {
+                formatter: info => `${info.name}\n${Number(info.percent).toFixed(1)}%`
+            },
+            emphasis: {
+                scale: true,
+                scaleSize: 8
+            }
+        }]
+    }, true);
+}
+
     function updateSummaryCards(data, selectedSites) {
         if (!summaryElements.siteCount) {
             return;
