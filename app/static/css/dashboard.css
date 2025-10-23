@@ -861,3 +861,58 @@ overflow: visible;
     max-width: 350px !important;
     word-wrap: break-word;
 }
+/* ===== 覆盖与布局修复（追加覆盖即可） ===== */
+.controls {
+  align-items: start !important;
+  grid-auto-rows: auto !important;
+}
+.control-group {
+  min-height: auto !important;
+}
+
+/* 站点列表：防滚动条遮挡 + 手感优化 */
+.options-wrapper--sites {
+  padding-right: 16px !important;
+  scrollbar-gutter: stable both-edges; /* Chrome/Edge 有效，固定滚动条占位 */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 顶部时间工具条（Sticky） */
+.toolbar--sticky {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: #fff;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+.toolbar-inner {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px 16px;
+  align-items: center;
+}
+@media (max-width: 768px) {
+  .toolbar-inner { grid-template-columns: 1fr; }
+}
+
+/* 状态分布容器保持与其他图一致 */
+.chart-container--compact {
+  padding-bottom: 28px;
+}
+
+/* 时间按钮与输入的一致性小优化 */
+.options-wrapper--time { gap: 10px; }
+.time-btn { min-width: 80px; white-space: nowrap; }
+
+/* 额外：防止 ECharts 滑块被遮挡 */
+.chart-container { position: relative; overflow: visible !important; }
+/* 顶部工具条内的提示文字 */
+.toolbar--sticky .control-hint {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #f0f0f0;
+}

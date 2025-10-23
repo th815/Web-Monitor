@@ -79,3 +79,17 @@ The migration is designed to handle the chicken-and-egg problem where:
 - Flask-Migrate needs the app to initialize to run migrations
 
 The solution provides multiple paths for users to successfully upgrade their databases.
+
+
+
+
+# 直接添加索引，不管迁移系统
+sqlite3 instance/monitoring_data.db << 'EOF'
+-- 添加性能索引
+CREATE INDEX IF NOT EXISTS idx_log_site_timestamp ON health_check_log(site_name, timestamp);
+CREATE INDEX IF NOT EXISTS idx_log_timestamp ON health_check_log(timestamp);
+CREATE INDEX IF NOT EXISTS idx_site_active ON monitored_site(is_active);
+-- 验证索引
+SELECT 'Indexes created:' as status;
+SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='health_check_log';
+EOF

@@ -47,6 +47,8 @@ document.addEventListener('DOMContentLoaded', () => {
         2: '#fac858',
         3: '#ee6666'
     };
+    // 统一调色板（可按需调整）
+    const LINE_COLORS = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#84cc16','#ec4899'];
 
     const calculateNineCount = (availability) => {
         if (!Number.isFinite(availability)) {
@@ -345,7 +347,7 @@ document.addEventListener('DOMContentLoaded', () => {
         timelineChart.setOption(option, true);
     }
 
-    function renderComparisonCharts(data) {
+        function renderComparisonCharts(data) {
         const siteKeys = Object.keys(data || {});
         if (siteKeys.length === 0) {
             setChartEmptyState(uptimeChart, uptimeChartContainer, '暂无可用率数据');
@@ -433,15 +435,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 responseTimeSeries.push({
                     name: siteName,
                     type: 'line',
-                    smooth: true,
-                    symbol: 'circle',
-                    symbolSize: 6,
-                    connectNulls: true,
                     data: seriesData
                 });
             }
         });
 
+        // 【修复】把 uptimeChart.setOption(...) 加回来
         if (uptimeCategories.length === 0) {
             setChartEmptyState(uptimeChart, uptimeChartContainer, '暂无可用率数据');
         } else {
@@ -503,16 +502,16 @@ document.addEventListener('DOMContentLoaded', () => {
             setChartEmptyState(responseTimeChart, responseTimeChartContainer, null);
 
             responseTimeChart.setOption({
+                color: LINE_COLORS,
                 tooltip: {
                     trigger: 'axis',
                     formatter: params => {
-                        if (!params || !params.length) {
-                            return '';
-                        }
+                        if (!params || !params.length) return '';
                         const first = params[0];
                         const value = Array.isArray(first.value) ? first.value[0] : first.axisValue;
                         const numericValue = Number(value);
-                        const label = timestampLabelMap.get(numericValue) || formatChartTooltipTime(numericValue);
+                        const label = (timestampLabelMap && timestampLabelMap.get && timestampLabelMap.get(numericValue))
+                            || (typeof formatChartTooltipTime === 'function' ? formatChartTooltipTime(numericValue) : new Date(numericValue).toLocaleString());
                         const lines = [`<strong>${label}</strong>`];
                         params.forEach(item => {
                             const val = Array.isArray(item.value) ? item.value[1] : item.data;
@@ -529,9 +528,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     boundaryGap: false,
                     min: startBoundary,
                     max: endBoundary,
-                    axisLabel: {
-                        formatter: value => formatChartAxisTime(value)
-                    }
+                    axisLabel: { formatter: value => formatChartAxisTime(value) }
                 },
                 yAxis: { type: 'value', name: '响应时间 (秒)', nameGap: 30 },
                 dataZoom: [
@@ -546,15 +543,22 @@ document.addEventListener('DOMContentLoaded', () => {
                         zoomOnMouseWheel: false,
                         brushSelect: false
                     },
-                    {
-                        type: 'inside',
-                        disabled: true
-                    }
+                    { type: 'inside', disabled: true }
                 ],
-                series: responseTimeSeries
+                series: responseTimeSeries.map((s, idx) => ({
+                    ...s,
+                    smooth: 0.25,
+                    symbol: 'circle',
+                    symbolSize: 4,
+                    showSymbol: false,
+                    lineStyle: { width: 2, opacity: 0.95 },
+                    areaStyle: { opacity: 0.06 },
+                    emphasis: { focus: 'series' }
+                }))
             }, true);
         }
     }
+
 
     function renderStatusDistribution(data) {
     if (!statusDistributionChart || !statusDistributionChartContainer) {
