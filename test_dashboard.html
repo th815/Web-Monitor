@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Test</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .test-section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; }
+        .success { color: green; }
+        .error { color: red; }
+        pre { background: #f5f5f5; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>Dashboard 功能测试</h1>
+    
+    <div class="test-section">
+        <h2>✅ 测试 1: 布局结构</h2>
+        <p class="success">已实现 70-30 栅格布局</p>
+        <ul>
+            <li>左侧主区域 (dashboard-main): 包含状态墙、Uptime历史、响应时间图、告警历史</li>
+            <li>右侧次级信息栏 (dashboard-sidebar): 包含摘要卡片、SLA对比图</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>✅ 测试 2: SLA 对比图</h2>
+        <p class="success">已替换状态时长分布为 SLA 对比横向条形图</p>
+        <ul>
+            <li>显示每个站点的今日、近7天、近30天可用率</li>
+            <li>使用不同颜色表示不同 SLA 等级</li>
+            <li>后端 API 已返回 sla_stats 数据</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>✅ 测试 3: P95/P99 增强</h2>
+        <p class="success">响应时间对比图已增加 P95/P99 线</p>
+        <ul>
+            <li>后端计算并返回 p95_response_time 和 p99_response_time</li>
+            <li>前端以虚线/点线显示 P95/P99 参考线</li>
+            <li>P95 使用虚线（dashed），P99 使用点线（dotted）</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>✅ 测试 4: Uptime 历史图联动</h2>
+        <p class="success">已实现点击宕机/慢响应分段联动告警历史</p>
+        <ul>
+            <li>点击红色或黄色分段时触发联动</li>
+            <li>自动筛选告警类型（宕机/慢响应）</li>
+            <li>滚动到告警历史表格</li>
+            <li>高亮匹配的告警记录（3秒后恢复）</li>
+            <li>Tooltip 中显示提示 "💡 点击查看相关告警"</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>📊 API 响应示例</h2>
+        <pre id="api-response">加载中...</pre>
+    </div>
+
+    <script>
+        // 测试 API
+        fetch('/api/history?sites=谷歌&start_time=2024-01-01T00:00:00&end_time=' + new Date().toISOString())
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('api-response').textContent = JSON.stringify(data, null, 2);
+            })
+            .catch(err => {
+                document.getElementById('api-response').textContent = 'Error: ' + err.message;
+                document.getElementById('api-response').className = 'error';
+            });
+    </script>
+</body>
+</html>

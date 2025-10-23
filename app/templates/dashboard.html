@@ -39,126 +39,130 @@
         <p class="control-hint">最多可查询过去 {{ DATA_RETENTION_DAYS }} 天内的数据，也可以通过下方自定义时间段进行对比。</p>
     </div>
 
-    <div id="status-wall-container">
-        <h2>实时状态概览</h2>
-        <div id="status-wall"></div>
-    </div>
+    <!-- 主栅格布局容器 -->
+    <div class="dashboard-grid">
+        <!-- 左侧主区域 (70%) -->
+        <div class="dashboard-main">
+            <div id="status-wall-container">
+                <h2>实时状态概览</h2>
+                <div id="status-wall"></div>
+            </div>
 
-    <!-- 只保留站点选择 -->
-    <div class="controls">
-        <div class="control-group control-group--sites">
-            <div class="control-header">
-                <span class="group-title">选择网站:</span>
-                <div class="control-header-actions">
-                    <button id="select-all" class="control-btn">全选</button>
-                    <button id="deselect-all" class="control-btn control-btn--ghost">全不选</button>
+            <!-- 只保留站点选择 -->
+            <div class="controls">
+                <div class="control-group control-group--sites">
+                    <div class="control-header">
+                        <span class="group-title">选择网站:</span>
+                        <div class="control-header-actions">
+                            <button id="select-all" class="control-btn">全选</button>
+                            <button id="deselect-all" class="control-btn control-btn--ghost">全不选</button>
+                        </div>
+                    </div>
+                    <div class="options-wrapper options-wrapper--sites" id="site-selector">
+                        {% for site in sites %}
+                        <label class="site-selector-label">
+                            <input type="checkbox" name="site" value="{{ site }}" checked>
+                            <span>{{ site }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
                 </div>
             </div>
-            <div class="options-wrapper options-wrapper--sites" id="site-selector">
-                {% for site in sites %}
-                <label class="site-selector-label">
-                    <input type="checkbox" name="site" value="{{ site }}" checked>
-                    <span>{{ site }}</span>
-                </label>
-                {% endfor %}
+
+            <div id="uptime-tooltip" style="display: none; position: fixed; pointer-events: none;"></div>
+
+            <div class="uptime-history-container">
+                <div class="uptime-history-header">
+                    <h2>Uptime 历史状态</h2>
+                    <div class="timeline-legend">
+                        <span class="legend-item"><i class="legend-color-box" style="background-color: #91cc75;"></i> 正常</span>
+                        <span class="legend-item"><i class="legend-color-box" style="background-color: #fac858;"></i> 慢</span>
+                        <span class="legend-item"><i class="legend-color-box" style="background-color: #ee6666;"></i> 宕机</span>
+                        <span class="legend-item"><i class="legend-color-box" style="background-color: #f0f0f0; border: 1px solid #ccc;"></i> 无数据</span>
+                    </div>
+                </div>
+                <div id="timeline-chart" style="width: 100%; height: 250px;"></div>
+            </div>
+
+            <div class="chart-container">
+                <h2>响应时间对比 (秒)</h2>
+                <div id="response-time-chart" style="width: 100%; height: 400px;"></div>
+            </div>
+
+            <div class="alerts-container">
+                <div class="alerts-header">
+                    <h2>日志告警历史</h2>
+                    <span class="alerts-subtitle">展示所选站点在当前时间范围内的宕机与性能告警</span>
+                </div>
+                <div class="alerts-toolbar">
+                    <label class="alerts-filter">
+                        <span class="alerts-filter-label">告警状态</span>
+                        <select id="alert-status-filter" class="alerts-filter-select">
+                            <option value="unresolved" selected>未恢复</option>
+                            <option value="all">全部</option>
+                            <option value="resolved">已恢复</option>
+                        </select>
+                    </label>
+                    <label class="alerts-filter">
+                        <span class="alerts-filter-label">告警类型</span>
+                        <select id="alert-type-filter" class="alerts-filter-select">
+                            <option value="all" selected>全部类型</option>
+                            <option value="down">宕机</option>
+                            <option value="slow">访问过慢</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="alerts-table-wrapper">
+                    <table class="alerts-table" id="alert-history-table">
+                        <thead>
+                            <tr>
+                                <th>站点</th>
+                                <th>类型</th>
+                                <th>触发时间</th>
+                                <th>解决时间</th>
+                                <th>持续时间</th>
+                                <th>详情</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alert-history-body"></tbody>
+                    </table>
+                    <div id="alert-history-empty" class="alerts-empty" data-default-text="选定范围内暂无告警">选定范围内暂无告警</div>
+                </div>
+                <p id="alert-history-footnote" class="alerts-footnote" style="display: none;">已为您展示最新的 30 条告警，建议缩小时间范围查看更多。</p>
             </div>
         </div>
-    </div>
 
-    <div class="summary-cards" id="summary-cards">
-        <div class="summary-card">
-            <span class="summary-card-label">已选站点</span>
-            <span class="summary-card-value" id="summary-site-count">--</span>
-            <span class="summary-card-hint">共 {{ sites|length }} 个监控站点</span>
-        </div>
-        <div class="summary-card">
-            <span class="summary-card-label">平均可用率</span>
-            <span class="summary-card-value" id="summary-avg-uptime">--</span>
-            <span class="summary-card-hint">选定时段内</span>
-        </div>
-        <div class="summary-card">
-            <span class="summary-card-label">平均响应时间</span>
-            <span class="summary-card-value" id="summary-avg-response">--</span>
-            <span class="summary-card-hint">单位：秒</span>
-        </div>
-        <div class="summary-card">
-            <span class="summary-card-label">异常事件</span>
-            <span class="summary-card-value" id="summary-incident-count">--</span>
-            <span class="summary-card-hint" id="summary-incident-hint">宕机 + 性能告警</span>
-        </div>
-    </div>
+        <!-- 右侧次级信息栏 (30%) -->
+        <div class="dashboard-sidebar">
+            <div class="summary-cards" id="summary-cards">
+                <div class="summary-card">
+                    <span class="summary-card-label">已选站点</span>
+                    <span class="summary-card-value" id="summary-site-count">--</span>
+                    <span class="summary-card-hint">共 {{ sites|length }} 个监控站点</span>
+                </div>
+                <div class="summary-card">
+                    <span class="summary-card-label">平均可用率</span>
+                    <span class="summary-card-value" id="summary-avg-uptime">--</span>
+                    <span class="summary-card-hint">选定时段内</span>
+                </div>
+                <div class="summary-card">
+                    <span class="summary-card-label">平均响应时间</span>
+                    <span class="summary-card-value" id="summary-avg-response">--</span>
+                    <span class="summary-card-hint">单位：秒</span>
+                </div>
+                <div class="summary-card">
+                    <span class="summary-card-label">异常事件</span>
+                    <span class="summary-card-value" id="summary-incident-count">--</span>
+                    <span class="summary-card-hint" id="summary-incident-hint">宕机 + 性能告警</span>
+                </div>
+            </div>
 
-    <!-- 状态时长分布（独立块） -->
-    <div class="chart-container chart-container--compact">
-        <h2>状态时长分布</h2>
-        <div id="status-distribution-chart" style="width: 100%; height: 320px;"></div>
-    </div>
-
-    <div id="uptime-tooltip" style="display: none; position: fixed; pointer-events: none;"></div>
-
-    <div class="alerts-container">
-        <div class="alerts-header">
-            <h2>日志告警历史</h2>
-            <span class="alerts-subtitle">展示所选站点在当前时间范围内的宕机与性能告警</span>
-        </div>
-        <div class="alerts-toolbar">
-            <label class="alerts-filter">
-                <span class="alerts-filter-label">告警状态</span>
-                <select id="alert-status-filter" class="alerts-filter-select">
-                    <option value="unresolved" selected>未恢复</option>
-                    <option value="all">全部</option>
-                    <option value="resolved">已恢复</option>
-                </select>
-            </label>
-            <label class="alerts-filter">
-                <span class="alerts-filter-label">告警类型</span>
-                <select id="alert-type-filter" class="alerts-filter-select">
-                    <option value="all" selected>全部类型</option>
-                    <option value="down">宕机</option>
-                    <option value="slow">访问过慢</option>
-                </select>
-            </label>
-        </div>
-        <div class="alerts-table-wrapper">
-            <table class="alerts-table" id="alert-history-table">
-                <thead>
-                    <tr>
-                        <th>站点</th>
-                        <th>类型</th>
-                        <th>触发时间</th>
-                        <th>解决时间</th>
-                        <th>持续时间</th>
-                        <th>详情</th>
-                    </tr>
-                </thead>
-                <tbody id="alert-history-body"></tbody>
-            </table>
-            <div id="alert-history-empty" class="alerts-empty" data-default-text="选定范围内暂无告警">选定范围内暂无告警</div>
-        </div>
-        <p id="alert-history-footnote" class="alerts-footnote" style="display: none;">已为您展示最新的 30 条告警，建议缩小时间范围查看更多。</p>
-    </div>
-
-    <div class="uptime-history-container">
-        <div class="uptime-history-header">
-            <h2>Uptime 历史状态</h2>
-            <div class="timeline-legend">
-                <span class="legend-item"><i class="legend-color-box" style="background-color: #91cc75;"></i> 正常</span>
-                <span class="legend-item"><i class="legend-color-box" style="background-color: #fac858;"></i> 慢</span>
-                <span class="legend-item"><i class="legend-color-box" style="background-color: #ee6666;"></i> 宕机</span>
-                <span class="legend-item"><i class="legend-color-box" style="background-color: #f0f0f0; border: 1px solid #ccc;"></i> 无数据</span>
+            <!-- SLA 对比图 (替换状态时长分布) -->
+            <div class="chart-container chart-container--compact">
+                <h2>SLA 对比</h2>
+                <div id="sla-comparison-chart" style="width: 100%; height: 500px;"></div>
             </div>
         </div>
-        <div id="timeline-chart" style="width: 100%; height: 250px;"></div>
-    </div>
-
-    <div class="chart-container">
-        <h2>可用率对比 (%)</h2>
-        <div id="uptime-chart" style="width: 100%; height: 400px;"></div>
-    </div>
-
-    <div class="chart-container">
-        <h2>响应时间对比 (秒)</h2>
-        <div id="response-time-chart" style="width: 100%; height: 400px;"></div>
     </div>
 
     <footer>
