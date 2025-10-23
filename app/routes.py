@@ -579,11 +579,43 @@ def get_history():
         ).order_by(HealthCheckLog.timestamp.asc()).all()
 
         timeline_data = []
+        incidents = []
 
         def get_simple_status(log):
             if log.status == '无法访问': return 'down'
             if log.status == '访问过慢': return 'slow'
             return 'up'
+
+        def extract_incident_reason(log):
+            if log.error_detail:
+                return log.error_detail
+            if log.http_status_code and log.http_status_code >= 400:
+                return f"HTTP {log.http_status_code}"
+            if log.status == '访问过慢' and log.response_time_seconds is not None:
+                return f"响应时间 {log.response_time_seconds:.3f}s"
+            return None
+
+        status_label_map = {'down': '宕机', 'slow': '访问过慢'}
+        current_incident = None
+
+        def finalize_incident(incident, closure_time, resolved):
+            if not incident:
+                return
+            resolved_time = min(closure_time, end_time_utc)
+            if resolved_time < incident['start']:
+                resolved_time = incident['start']
+            duration_ms = max(0, int((resolved_time - incident['start']).total_seconds() * 1000))
+            reason = next((candidate for candidate in incident.get('reasons', []) if candidate), None)
+            incidents.append({
+                "status_key": incident['status'],
+                "status_label": status_label_map.get(incident['status'], incident['status']),
+                "start_ts": int(incident['start'].timestamp() * 1000),
+                "end_ts": int(resolved_time.timestamp() * 1000),
+                "duration_ms": duration_ms,
+                "resolved": resolved,
+                "reason": reason,
+                "http_status_code": incident.get('http_status_code'),
+            })
 
         if not logs:
             timeline_data.append([
@@ -593,6 +625,36 @@ def get_history():
                 "该时间段内无数据"
             ])
         else:
+            for log in logs:
+                status_key = get_simple_status(log)
+                log_time = log.timestamp.replace(tzinfo=timezone.utc)
+                reason = extract_incident_reason(log)
+
+                if status_key in ('down', 'slow'):
+                    if current_incident and current_incident['status'] == status_key:
+                        current_incident['last_seen'] = log_time
+                        if reason and reason not in current_incident['reasons']:
+                            current_incident['reasons'].append(reason)
+                        if log.http_status_code and not current_incident.get('http_status_code'):
+                            current_incident['http_status_code'] = log.http_status_code
+                    else:
+                        if current_incident:
+                            finalize_incident(current_incident, log_time, True)
+                        current_incident = {
+                            "status": status_key,
+                            "start": log_time,
+                            "last_seen": log_time,
+                            "reasons": [reason] if reason else [],
+                            "http_status_code": log.http_status_code if log.http_status_code else None,
+                        }
+                else:
+                    if current_incident:
+                        finalize_incident(current_incident, log_time, True)
+                        current_incident = None
+
+            if current_incident:
+                finalize_incident(current_incident, end_time_utc, False)
+
             i = 0
             while i < len(logs):
                 current_log = logs[i]
@@ -645,6 +707,7 @@ def get_history():
             "response_times": {
                 "timestamps": [to_gmt8(log.timestamp).strftime('%Y-%m-%d %H:%M') for log in logs],
                 "times": [log.response_time_seconds for log in logs]
-            }
+            },
+            "incidents": incidents,
         }
     return jsonify(results)
