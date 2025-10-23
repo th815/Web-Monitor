@@ -7,6 +7,7 @@ from wtforms import (
     FloatField,
     IntegerField,
     PasswordField,
+    SelectField,
     StringField,
     SubmitField,
     TextAreaField,
@@ -98,52 +99,53 @@ class MonitoringSettingsForm(FlaskForm):
     )
     submit = SubmitField('保存设置')
 
-class NotificationSettingsForm(FlaskForm):
-    # 企业微信开关
-    qywechat_enabled = BooleanField('启用企业微信通知')
-    qywechat_webhook_url = StringField(
-        '企业微信 Webhook 地址',
-        validators=[Optional(), URL(message='请输入有效的 URL 地址')]
+class NotificationChannelForm(FlaskForm):
+    name = StringField('渠道名称', validators=[DataRequired(), Length(max=128)])
+    channel_type = SelectField(
+        '渠道类型',
+        choices=[
+            ('qywechat', '企业微信'),
+            ('dingtalk', '钉钉'),
+            ('feishu', '飞书'),
+            ('custom', '自定义 Webhook'),
+        ],
+        validators=[DataRequired()],
+        default='qywechat',
     )
-class NotificationSettingsForm(FlaskForm):
-    webhook_enabled = BooleanField('启用 Webhook 通知')
+    is_enabled = BooleanField('启用渠道', default=True)
     webhook_url = StringField(
         'Webhook 地址',
         validators=[Optional(), URL(message='请输入有效的 URL 地址')]
     )
-    webhook_content_type = StringField(
-        '内容类型',
-        validators=[Optional(), Length(max=120)],
-        default='application/json'
-    )
-    webhook_headers = TextAreaField(
+    notify_on_down = BooleanField('宕机告警', default=True)
+    notify_on_recovered = BooleanField('恢复通知', default=True)
+    notify_on_slow = BooleanField('慢响应告警', default=False)
+    notify_on_slow_recovered = BooleanField('慢响应恢复通知', default=False)
+    notify_on_management = BooleanField('配置变更通知', default=False)
+    custom_headers = TextAreaField(
         '自定义请求头 (JSON)',
         validators=[Optional()],
-        render_kw={'placeholder': '{"Authorization": "Bearer your-token"}'}
+        render_kw={'rows': 4, 'placeholder': '{"Authorization": "Bearer your-token"}'}
     )
-    webhook_template = TextAreaField(
-        '消息模板',
+    custom_template = TextAreaField(
+        '自定义消息模板 (Jinja2)',
         validators=[Optional(), Length(max=8000)],
         render_kw={'rows': 15}
     )
-    submit = SubmitField('保存设置')
-    test_webhook = SubmitField('发送测试通知')
 
     def validate(self, extra_validators=None):
         if not super().validate(extra_validators=extra_validators):
             return False
-
-        if self.webhook_enabled.data:
-            if not self.webhook_url.data:
-                self.webhook_url.errors.append('启用 Webhook 时必须填写地址。')
+        if self.is_enabled.data and not self.webhook_url.data:
+            self.webhook_url.errors.append('启用渠道时必须填写 Webhook 地址。')
+            return False
+        if self.channel_type.data == 'custom':
+            if not self.custom_template.data or not self.custom_template.data.strip():
+                self.custom_template.errors.append('自定义渠道必须提供消息模板。')
                 return False
-            if not self.webhook_template.data:
-                self.webhook_template.errors.append('启用 Webhook 时必须提供模板。')
-                return False
-
         return True
 
-    def validate_webhook_headers(self, field):
+    def validate_custom_headers(self, field):
         if not field.data or not field.data.strip():
             return
         try:

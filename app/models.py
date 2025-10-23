@@ -1,5 +1,8 @@
 # web-monitor/app/models.py
 import datetime
+import json
+from sqlalchemy import inspect as sa_inspect, text
+from sqlalchemy.ext.mutable import MutableDict
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from .extensions import db
@@ -175,22 +178,23 @@ class MonitoringConfig(db.Model):
         return f'<MonitoringConfig id={self.id} interval={self.monitor_interval_seconds}s>'
 
 
-class NotificationConfig(db.Model):
-    __tablename__ = 'notification_config'
-    id = db.Column(db.Integer, primary_key=True)
-    webhook_enabled = db.Column(db.Boolean, nullable=False, default=False)
-    webhook_url = db.Column(db.String(512), nullable=True)
-    webhook_content_type = db.Column(db.String(128), nullable=False, default='application/json')
-    webhook_headers = db.Column(db.Text, nullable=True)
-    webhook_template = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False)
-    updated_at = db.Column(
-        db.DateTime,
-        default=datetime.datetime.utcnow,
-        onupdate=datetime.datetime.utcnow,
-        nullable=False,
-    )
-    DEFAULT_TEMPLATE = """{
+class NotificationChannel(db.Model):
+    __tablename__ = 'notification_channel'
+
+    TYPE_QYWECHAT = 'qywechat'
+    TYPE_DINGTALK = 'dingtalk'
+    TYPE_FEISHU = 'feishu'
+    TYPE_CUSTOM = 'custom'
+
+    EVENT_FIELD_MAP = {
+        'down': 'notify_on_down',
+        'recovered': 'notify_on_recovered',
+        'slow': 'notify_on_slow',
+        'slow_recovered': 'notify_on_slow_recovered',
+        'management': 'notify_on_management',
+    }
+
+    DEFAULT_CUSTOM_TEMPLATE = """{
   "event": "{{ event }}",
   "title": "{{ event_title }}",
   "site": {
@@ -210,74 +214,174 @@ class NotificationConfig(db.Model):
   "extra": {{ details|tojson }}
 }"""
 
-    @staticmethod
-    def default_template():
-        return NotificationConfig.DEFAULT_TEMPLATE
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(128), unique=True, nullable=False)
+    channel_type = db.Column(db.String(32), nullable=False, index=True)
+    is_enabled = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    webhook_url = db.Column(db.String(512), nullable=True)
+    notify_on_down = db.Column(db.Boolean, nullable=False, default=True)
+    notify_on_recovered = db.Column(db.Boolean, nullable=False, default=True)
+    notify_on_slow = db.Column(db.Boolean, nullable=False, default=False)
+    notify_on_slow_recovered = db.Column(db.Boolean, nullable=False, default=False)
+    notify_on_management = db.Column(db.Boolean, nullable=False, default=False)
+    custom_headers = db.Column(MutableDict.as_mutable(db.JSON), nullable=False, default=dict)
+    custom_template = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = db.Column(
+        db.DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        db.Index('ix_notification_channel_type_enabled', 'channel_type', 'is_enabled'),
+    )
 
     @staticmethod
-    def sample_payload():
-        now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    def default_custom_template():
+        return NotificationChannel.DEFAULT_CUSTOM_TEMPLATE
+
+    def headers_dict(self):
+        return dict(self.custom_headers or {})
+
+    def to_message_config(self) -> dict:
         return {
-            'event': 'site_status_change',
-            'event_title': '网站宕机告警通知',
-            'site_name': '示例站点',
-            'site_url': 'https://status.example.com',
-            'status_key': 'down',
-            'status_label': '无法访问',
-            'previous_status': '正常',
-            'severity': 'warning',
-            'operator': '自动监控系统',
-            'timestamp': now,
-            'http_code': 503,
-            'error_detail': '连接超时',
-            'details': [
-                {'label': '检测时间', 'value': now},
-                {'label': '连续失败次数', 'value': 3}
-            ]
+            'id': self.id,
+            'name': self.name,
+            'channel_type': self.channel_type,
+            'is_enabled': self.is_enabled,
+            'webhook_url': self.webhook_url,
+            'notify_on_down': self.notify_on_down,
+            'notify_on_recovered': self.notify_on_recovered,
+            'notify_on_slow': self.notify_on_slow,
+            'notify_on_slow_recovered': self.notify_on_slow_recovered,
+            'notify_on_management': self.notify_on_management,
+            'custom_headers': self.headers_dict(),
+            'custom_template': self.custom_template,
         }
 
+    def should_notify(self, event_key: str) -> bool:
+        field_name = self.EVENT_FIELD_MAP.get(event_key)
+        if not field_name:
+            return False
+        return bool(getattr(self, field_name, False))
+
     @classmethod
-    def get_or_create(cls):
-        config = cls.query.first()
-        if not config:
-            config = cls(
-                webhook_enabled=False,
-                webhook_template=cls.DEFAULT_TEMPLATE
+    def _generate_unique_name(cls, base_name: str) -> str:
+        candidate = base_name
+        counter = 1
+        while cls.query.filter_by(name=candidate).first() is not None:
+            counter += 1
+            candidate = f"{base_name} {counter}"
+        return candidate
+
+    @classmethod
+    def _bootstrap_from_legacy_config(cls) -> bool:
+        inspector = sa_inspect(db.engine)
+        if 'notification_config' not in inspector.get_table_names():
+            return False
+        result = db.session.execute(
+            text(
+                'SELECT webhook_enabled, webhook_url, webhook_headers, webhook_template '
+                'FROM notification_config ORDER BY id ASC LIMIT 1'
             )
-            db.session.add(config)
-            db.session.commit()
-        return config
-
-    def populate_form(self, form):
-        form.webhook_enabled.data = self.webhook_enabled
-        form.webhook_url.data = self.webhook_url
-        form.webhook_content_type.data = self.webhook_content_type or 'application/json'
-        form.webhook_headers.data = self.webhook_headers
-        form.webhook_template.data = self.webhook_template or self.DEFAULT_TEMPLATE
-
-    def update_from_form(self, form):
-        self.webhook_enabled = form.webhook_enabled.data
-        self.webhook_url = form.webhook_url.data
-        self.webhook_content_type = form.webhook_content_type.data or 'application/json'
-        self.webhook_headers = form.webhook_headers.data
-        self.webhook_template = form.webhook_template.data
-        self.updated_at = datetime.datetime.utcnow()
-
-    def apply_to_config(self, app_config):
-        app_config['GENERIC_WEBHOOK_ENABLED'] = self.webhook_enabled
-        app_config['GENERIC_WEBHOOK_URL'] = self.webhook_url
-        app_config['GENERIC_WEBHOOK_CONTENT_TYPE'] = self.webhook_content_type
-
-        if self.webhook_headers:
+        ).mappings().first()
+        if not result:
+            return False
+        if not result['webhook_enabled'] or not result['webhook_url']:
+            return False
+        headers = {}
+        raw_headers = result['webhook_headers']
+        if raw_headers:
             try:
-                import json
-                app_config['GENERIC_WEBHOOK_HEADERS'] = json.loads(self.webhook_headers)
-            except:
-                app_config['GENERIC_WEBHOOK_HEADERS'] = {}
-        else:
-            app_config['GENERIC_WEBHOOK_HEADERS'] = {}
+                loaded_headers = json.loads(raw_headers)
+                if isinstance(loaded_headers, dict):
+                    headers = loaded_headers
+            except (TypeError, ValueError):
+                headers = {}
+        template_text = result['webhook_template'] or cls.DEFAULT_CUSTOM_TEMPLATE
+        existing = (
+            cls.query.filter_by(channel_type=cls.TYPE_CUSTOM, webhook_url=result['webhook_url']).first()
+        )
+        if existing:
+            return False
+        name = cls._generate_unique_name('迁移的 Webhook 渠道')
+        channel = cls(
+            name=name,
+            channel_type=cls.TYPE_CUSTOM,
+            webhook_url=result['webhook_url'],
+            is_enabled=True,
+            notify_on_down=True,
+            notify_on_recovered=True,
+            notify_on_slow=True,
+            notify_on_slow_recovered=True,
+            notify_on_management=True,
+            custom_headers=headers,
+            custom_template=template_text,
+        )
+        db.session.add(channel)
+        return True
 
-        app_config['GENERIC_WEBHOOK_TEMPLATE'] = self.webhook_template
+    @classmethod
+    def bootstrap_from_config(cls, app_config) -> bool:
+        created = False
+        # 迁移旧的单通道配置
+        if cls._bootstrap_from_legacy_config():
+            created = True
+
+        qy_url = (app_config or {}).get('QYWECHAT_WEBHOOK_URL')
+        if qy_url and "YOUR_KEY_HERE" not in qy_url:
+            existing_qy = cls.query.filter_by(channel_type=cls.TYPE_QYWECHAT).first()
+            if not existing_qy:
+                name = cls._generate_unique_name('默认企业微信渠道')
+                channel = cls(
+                    name=name,
+                    channel_type=cls.TYPE_QYWECHAT,
+                    webhook_url=qy_url,
+                    is_enabled=True,
+                    notify_on_down=True,
+                    notify_on_recovered=True,
+                    notify_on_slow=True,
+                    notify_on_slow_recovered=True,
+                    notify_on_management=True,
+                )
+                db.session.add(channel)
+                created = True
+
+        generic_enabled = (app_config or {}).get('GENERIC_WEBHOOK_ENABLED')
+        generic_url = (app_config or {}).get('GENERIC_WEBHOOK_URL')
+        if generic_enabled and generic_url:
+            existing_generic = cls.query.filter_by(
+                channel_type=cls.TYPE_CUSTOM, webhook_url=generic_url
+            ).first()
+            if not existing_generic:
+                headers = app_config.get('GENERIC_WEBHOOK_HEADERS') or {}
+                name = cls._generate_unique_name('默认自定义渠道')
+                channel = cls(
+                    name=name,
+                    channel_type=cls.TYPE_CUSTOM,
+                    webhook_url=generic_url,
+                    is_enabled=True,
+                    notify_on_down=True,
+                    notify_on_recovered=True,
+                    notify_on_slow=True,
+                    notify_on_slow_recovered=True,
+                    notify_on_management=True,
+                    custom_headers=headers if isinstance(headers, dict) else {},
+                    custom_template=app_config.get('GENERIC_WEBHOOK_TEMPLATE')
+                    or cls.DEFAULT_CUSTOM_TEMPLATE,
+                )
+                db.session.add(channel)
+                created = True
+
+        if created:
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                raise
+        return created
 
     def __repr__(self):
-        return f'<NotificationConfig id={self.id} enabled={self.webhook_enabled}>'
+        return f"<NotificationChannel id={self.id} name={self.name} type={self.channel_type}>"

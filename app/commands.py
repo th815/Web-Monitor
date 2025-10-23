@@ -3,11 +3,12 @@ import datetime
 import secrets
 
 import click
+from flask import current_app
 from flask.cli import with_appcontext
 from werkzeug.security import generate_password_hash
 
 from .extensions import db
-from .models import MonitoredSite, PasswordResetToken, User
+from .models import MonitoringConfig, MonitoredSite, NotificationChannel, PasswordResetToken, User
 from .services import check_website_health  # 【新增】导入健康检查函数
 
 
@@ -19,7 +20,10 @@ def init_db_command():
     """
     db.create_all()
 
-    default_password = 'changeme'
+    MonitoringConfig.ensure(current_app.config)
+    channels_from_config = NotificationChannel.bootstrap_from_config(current_app.config)
+
+    default_password = 'admin123'
     if not User.query.first():
         click.echo('正在创建默认管理员账户...')
         default_admin = User(username='admin')
@@ -28,6 +32,7 @@ def init_db_command():
         click.echo(f"  - 用户名: admin, 密码: {default_password}")
     else:
         click.echo('管理员账户已存在，跳过创建。')
+
     if not MonitoredSite.query.first():
         click.echo('正在添加默认的监控站点列表...')
         default_sites = [
@@ -43,6 +48,27 @@ def init_db_command():
             click.echo(f"  - 添加站点: {site_data['name']}")
     else:
         click.echo('监控站点已存在，跳过创建。')
+
+    if channels_from_config:
+        click.echo('已根据配置文件导入通知渠道。')
+
+    if NotificationChannel.query.count() == 0:
+        sample_channel = NotificationChannel(
+            name='示例自定义渠道',
+            channel_type=NotificationChannel.TYPE_CUSTOM,
+            is_enabled=False,
+            webhook_url=None,
+            notify_on_down=True,
+            notify_on_recovered=True,
+            notify_on_slow=True,
+            notify_on_slow_recovered=True,
+            notify_on_management=True,
+            custom_headers={},
+            custom_template=NotificationChannel.default_custom_template(),
+        )
+        db.session.add(sample_channel)
+        click.echo('已创建一个禁用的示例通知渠道，便于后续配置。')
+
     db.session.commit()
 
     # 【核心修改】在数据提交后，手动调用一次健康检查

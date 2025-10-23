@@ -25,11 +25,11 @@ A lightweight, beautiful, and powerful self-hosted website health monitoring das
     *   在后台轻松添加、编辑、删除和禁用受监控的网站。
     *   查看详细的原始监控日志，支持搜索和筛选。
 *   **动态主题切换**: 管理员可以根据个人喜好在后台一键切换超过20种界面主题。
-*   **企业微信/Webhook 告警**:
-    *   当网站连续多次无法访问时，通过 Webhook 发送告警通知。
-    *   当网站从故障中恢复时，发送恢复通知。
-    *   当网站在多个周期内响应过慢时，主动推送性能告警，并在响应恢复后通知。
-    *   内置防抖机制（连续失败/慢响应 N 次后才告警），避免网络波动造成的频繁骚扰。
+*   **多渠道告警通知**:
+    *   管理后台的“通知渠道”支持企业微信、钉钉、飞书以及自定义 Webhook，多条渠道可同时使用。
+    *   每个渠道可独立配置启用状态与告警类型过滤（宕机、恢复、慢响应、配置变更等）。
+    *   企业微信与钉钉使用内置 Markdown 模板，飞书发送文本消息；自定义渠道支持 Jinja2 模板自定义请求体与请求头。
+    *   内置防抖机制（连续失败/慢响应 N 次后才告警），并可通过 `NOTIFICATION_WORKERS` 设置通知并发发送线程数。
 *   **后台定时任务**: 使用 **APScheduler** 自动执行周期性健康检查和历史数据清理任务。
 *   **数据库平滑升级**: 集成 **Flask-Migrate**，修改数据模型后无需删库跑路，一条命令即可热更新数据库结构，保留所有历史数据。
 
@@ -87,8 +87,11 @@ A lightweight, beautiful, and powerful self-hosted website health monitoring das
         ```bash
         python -c 'import secrets; print(secrets.token_hex(16))'
         ```
-    *   **`QYWECHAT_WEBHOOK_URL`**: (可选) 填入你的企业微信群机器人的 Webhook URL 以启用告警通知功能。
+    *   **通知渠道初始化（可选）**:
+        *   `QYWECHAT_WEBHOOK_URL`：首次启动时如填写，将自动生成一条“企业微信”通知渠道记录；迁移后请在后台的“通知渠道”中维护该配置。
+        *   `GENERIC_WEBHOOK_*`：为兼容旧版本保留，若设置将导入一条使用原有模板的自定义渠道。
     *   **`MONITOR_INTERVAL_SECONDS`**: (可选) 健康检查频率（秒）。可通过环境变量 MONITOR_INTERVAL_SECONDS 配置，默认 20 秒。
+    *   **`NOTIFICATION_WORKERS`** (可选): 通知发送线程池大小，默认 4，设置为 1 可禁用并发发送。
     *   **慢响应告警参数**（可选）: 通过 `SLOW_RESPONSE_THRESHOLD_SECONDS`、`SLOW_RESPONSE_CONFIRMATION_THRESHOLD`、`SLOW_RESPONSE_WINDOW_THRESHOLD`、`SLOW_RESPONSE_RECOVERY_THRESHOLD` 精细化控制慢响应判定与恢复机制。
 
 ### 4. 数据库初始化与迁移 (Database Initialization & Migration)
@@ -109,13 +112,16 @@ A lightweight, beautiful, and powerful self-hosted website health monitoring das
     ```
 
 3.  **填充初始数据**
-    运行自定义命令来创建默认管理员和监控站点。
+    运行自定义命令来创建默认管理员、站点示例以及通知渠道模板。
     ```bash
     flask init-db
     ```
-    执行后会创建一个默认管理员账户：
-    *   **用户名**: `admin`
-    *   **密码**: `changeme`
+    执行后会准备以下内容：
+    *   **管理员账户**: 用户名 `admin`，密码 `admin123`
+    *   **示例监控站点**: 自动导入谷歌、GitHub、百度等示例项，可按需删除或修改
+    *   **通知渠道**:
+        *   若 `config.py` 中设置了 `QYWECHAT_WEBHOOK_URL` 或 `GENERIC_WEBHOOK_*`，会自动生成对应的渠道记录
+        *   若仍未配置任何渠道，将创建一条禁用的“示例自定义渠道”，可直接编辑为你的 Webhook
 
     **强烈建议首次登录后立即在后台修改默认密码！**
 

@@ -45,6 +45,9 @@ RECOVERY_CONFIRMATION_THRESHOLD = 2      # 连续成功 N 次后才发送“恢�
 QUICK_RETRY_COUNT = 1                    # 单次检查失败后，快速重试次数
 QUICK_RETRY_DELAY_SECONDS = 2            # 快速重试间隔（秒）
 
+# 通知发送线程池大小（可通过环境变量 NOTIFICATION_WORKERS 覆盖，设置为 1 可禁用并发）
+NOTIFICATION_WORKERS = int(os.getenv('NOTIFICATION_WORKERS', '4'))
+
 # 数据保留
 DATA_RETENTION_DAYS = 30
 
