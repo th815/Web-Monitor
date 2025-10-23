@@ -9,8 +9,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const uptimeChart = echarts.init(uptimeChartContainer);
     const responseTimeChartContainer = document.getElementById('response-time-chart');
     const responseTimeChart = echarts.init(responseTimeChartContainer);
-    const statusDistributionChartContainer = document.getElementById('status-distribution-chart');
-    const statusDistributionChart = statusDistributionChartContainer ? echarts.init(statusDistributionChartContainer) : null;
+    const slaComparisonChartContainer = document.getElementById('sla-comparison-chart');
+    const slaComparisonChart = slaComparisonChartContainer ? echarts.init(slaComparisonChartContainer) : null;
     const alertHistoryTable = document.getElementById('alert-history-table');
     const alertHistoryBody = document.getElementById('alert-history-body');
     const alertHistoryEmptyState = document.getElementById('alert-history-empty');
@@ -312,7 +312,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     const details = params.value[4];
                     const startLabel = formatChartTooltipTime(params.value[1]);
                     const endLabel = formatChartTooltipTime(params.value[2]);
-                    return `<strong>${seriesName}</strong><br/>时间: ${startLabel} - ${endLabel}<br/>${details}`;
+                    const status = params.value[3];
+                    let tip = `<strong>${seriesName}</strong><br/>时间: ${startLabel} - ${endLabel}<br/>${details}`;
+                    if (status === 3 || status === 2) {
+                        tip += '<br/><span style="color: #3498db; font-size: 11px;">💡 点击查看相关告警</span>';
+                    }
+                    return tip;
                 }
             },
             dataZoom: [
@@ -345,6 +350,84 @@ document.addEventListener('DOMContentLoaded', () => {
             series
         };
         timelineChart.setOption(option, true);
+        
+        // 添加点击事件监听，实现联动
+        timelineChart.off('click');
+        timelineChart.on('click', function (params) {
+            if (params.seriesType === 'custom' && params.value) {
+                const status = params.value[3];
+                const startTime = params.value[1];
+                const endTime = params.value[2];
+                const siteName = params.seriesName;
+                
+                // 只有宕机或慢响应才联动
+                if (status === 3 || status === 2) {
+                    filterAndScrollToAlerts(siteName, startTime, endTime, status);
+                }
+            }
+        });
+    }
+    
+    // 联动函数：筛选并滚动到告警
+    function filterAndScrollToAlerts(siteName, startTime, endTime, status) {
+        if (!alertHistoryBody || !latestHistoryData) {
+            return;
+        }
+        
+        // 滚动到告警历史区域
+        const alertsContainer = document.querySelector('.alerts-container');
+        if (alertsContainer) {
+            alertsContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        
+        // 更新筛选器以显示相关告警
+        if (alertTypeFilter) {
+            if (status === 3) {
+                alertTypeFilter.value = 'down';
+            } else if (status === 2) {
+                alertTypeFilter.value = 'slow';
+            }
+            alertFilters.type = alertTypeFilter.value;
+        }
+        
+        if (alertStatusFilter) {
+            alertStatusFilter.value = 'all';
+            alertFilters.status = 'all';
+        }
+        
+        // 重新渲染告警历史
+        renderAlertHistory(latestHistoryData);
+        
+        // 高亮匹配的行
+        setTimeout(() => {
+            const rows = alertHistoryBody.querySelectorAll('tr');
+            let foundMatch = false;
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length >= 3) {
+                    const rowSiteName = cells[0].textContent.trim();
+                    const triggerTimeText = cells[2].textContent.trim();
+                    
+                    // 简单的时间范围匹配
+                    if (rowSiteName === siteName) {
+                        // 解析触发时间
+                        const triggerTime = Date.parse(triggerTimeText.replace(' ', 'T'));
+                        if (triggerTime >= startTime && triggerTime <= endTime) {
+                            row.style.backgroundColor = '#fffacd';
+                            row.style.transition = 'background-color 0.3s';
+                            if (!foundMatch) {
+                                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                foundMatch = true;
+                            }
+                            // 3秒后恢复原色
+                            setTimeout(() => {
+                                row.style.backgroundColor = '';
+                            }, 3000);
+                        }
+                    }
+                }
+            });
+        }, 300);
     }
 
         function renderComparisonCharts(data) {
@@ -501,6 +584,42 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             setChartEmptyState(responseTimeChart, responseTimeChartContainer, null);
 
+            // 添加 P95 和 P99 线
+            const allSeries = [...responseTimeSeries];
+            const p95Series = [];
+            const p99Series = [];
+            
+            siteKeys.forEach(siteName => {
+                const siteData = data[siteName] || {};
+                const p95 = siteData.overall_stats?.p95_response_time;
+                const p99 = siteData.overall_stats?.p99_response_time;
+                
+                if (Number.isFinite(p95) && p95 > 0) {
+                    p95Series.push({
+                        name: `${siteName} P95`,
+                        type: 'line',
+                        data: sortedTimestamps.map(ts => [ts, p95]),
+                        lineStyle: { type: 'dashed', width: 1.5, opacity: 0.7 },
+                        symbol: 'none',
+                        silent: true
+                    });
+                }
+                
+                if (Number.isFinite(p99) && p99 > 0) {
+                    p99Series.push({
+                        name: `${siteName} P99`,
+                        type: 'line',
+                        data: sortedTimestamps.map(ts => [ts, p99]),
+                        lineStyle: { type: 'dotted', width: 1.5, opacity: 0.7 },
+                        symbol: 'none',
+                        silent: true
+                    });
+                }
+            });
+
+            allSeries.push(...p95Series, ...p99Series);
+            const allLegends = [...responseTimeLegends, ...p95Series.map(s => s.name), ...p99Series.map(s => s.name)];
+
             responseTimeChart.setOption({
                 color: LINE_COLORS,
                 tooltip: {
@@ -521,7 +640,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         return lines.join('<br/>');
                     }
                 },
-                legend: { data: responseTimeLegends, top: 10, type: 'scroll' },
+                legend: { data: allLegends, top: 10, type: 'scroll' },
                 grid: { top: 70, left: 60, right: 50, bottom: 120 },
                 xAxis: {
                     type: 'time',
@@ -545,117 +664,202 @@ document.addEventListener('DOMContentLoaded', () => {
                     },
                     { type: 'inside', disabled: true }
                 ],
-                series: responseTimeSeries.map((s, idx) => ({
-                    ...s,
-                    smooth: 0.25,
-                    symbol: 'circle',
-                    symbolSize: 4,
-                    showSymbol: false,
-                    lineStyle: { width: 2, opacity: 0.95 },
-                    areaStyle: { opacity: 0.06 },
-                    emphasis: { focus: 'series' }
-                }))
+                series: allSeries.map((s, idx) => {
+                    // 如果是 P95/P99 线，保持原样
+                    if (s.name.includes('P95') || s.name.includes('P99')) {
+                        return s;
+                    }
+                    // 否则应用平滑和样式
+                    return {
+                        ...s,
+                        smooth: 0.25,
+                        symbol: 'circle',
+                        symbolSize: 4,
+                        showSymbol: false,
+                        lineStyle: { width: 2, opacity: 0.95 },
+                        areaStyle: { opacity: 0.06 },
+                        emphasis: { focus: 'series' }
+                    };
+                })
             }, true);
         }
     }
 
 
-    function renderStatusDistribution(data) {
-    if (!statusDistributionChart || !statusDistributionChartContainer) {
-        return;
-    }
-    const siteKeys = Object.keys(data || {});
-    if (siteKeys.length === 0) {
-        setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '暂无状态分布数据');
-        return;
-    }
-    const allSiteTotals = [];
+    function renderSLAComparison(data) {
+        if (!slaComparisonChart || !slaComparisonChartContainer) {
+            return;
+        }
+        const siteKeys = Object.keys(data || {});
+        if (siteKeys.length === 0) {
+            setChartEmptyState(slaComparisonChart, slaComparisonChartContainer, '暂无 SLA 对比数据');
+            return;
+        }
 
-    siteKeys.forEach(siteName => {
-        const siteTotals = { up: 0, slow: 0, down: 0, nodata: 0 };
-        const segments = data[siteName].timeline_data || [];
-
-        segments.forEach(segment => {
-            const start = segment[0] || 0;
-            const end = segment[1] || 0;
-            const status = segment[2];
-            const duration = Math.max(0, end - start);
-            if (!duration) return;
-
-            if (status === 1) siteTotals.up += duration;
-            else if (status === 2) siteTotals.slow += duration;
-            else if (status === 3) siteTotals.down += duration;
-            else siteTotals.nodata += duration;
+        // 计算每个站点在不同时间窗口的可用率
+        const slaData = [];
+        const now = new Date();
+        
+        siteKeys.forEach(siteName => {
+            const siteData = data[siteName] || {};
+            const overallAvailability = siteData.overall_stats?.availability || 0;
+            
+            // 从 overall_stats 中获取或计算可用率
+            // 这里简化处理，使用当前选定时段的可用率作为参考
+            // 实际应该从后端获取不同时间窗口的数据
+            const sla = {
+                name: siteName,
+                today: overallAvailability,
+                week: overallAvailability,
+                month: overallAvailability
+            };
+            
+            // 如果有 sla_stats，则使用它
+            if (siteData.sla_stats) {
+                sla.today = siteData.sla_stats.today || overallAvailability;
+                sla.week = siteData.sla_stats.week || overallAvailability;
+                sla.month = siteData.sla_stats.month || overallAvailability;
+            }
+            
+            slaData.push(sla);
         });
 
-        allSiteTotals.push(siteTotals);
-    });
-    // 计算平均时长
-    const avgTotals = { up: 0, slow: 0, down: 0, nodata: 0 };
-    allSiteTotals.forEach(totals => {
-        avgTotals.up += totals.up;
-        avgTotals.slow += totals.slow;
-        avgTotals.down += totals.down;
-        avgTotals.nodata += totals.nodata;
-    });
+        const chartHeight = Math.max(400, siteKeys.length * 80 + 120);
+        slaComparisonChartContainer.style.height = `${chartHeight}px`;
+        slaComparisonChart.resize();
 
-    // 取平均值
-    const siteCount = allSiteTotals.length;
-    if (siteCount > 0) {
-        avgTotals.up /= siteCount;
-        avgTotals.slow /= siteCount;
-        avgTotals.down /= siteCount;
-        avgTotals.nodata /= siteCount;
-    }
-    const totalDuration = Object.values(avgTotals).reduce((acc, value) => acc + value, 0);
-    if (totalDuration <= 0) {
-        setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '暂无状态分布数据');
-        return;
-    }
-    setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, null);
-    const pieData = [];
-    if (avgTotals.up > 0) pieData.push({ name: '正常', value: avgTotals.up, itemStyle: { color: '#67C23A' } });
-    if (avgTotals.slow > 0) pieData.push({ name: '访问过慢', value: avgTotals.slow, itemStyle: { color: '#E6A23C' } });
-    if (avgTotals.down > 0) pieData.push({ name: '无法访问', value: avgTotals.down, itemStyle: { color: '#F56C6C' } });
-    if (avgTotals.nodata > 0) pieData.push({ name: '无数据', value: avgTotals.nodata, itemStyle: { color: '#C0CCDA' } });
-    statusDistributionChart.setOption({
-        title: {
-            text: siteCount > 1 ? `状态时长分布（${siteCount}个站点平均）` : '状态时长分布',
-            left: 'center',
-            top: 10,
-            textStyle: {
-                fontSize: 16,
-                fontWeight: 'normal'
-            }
-        },
-        tooltip: {
-            trigger: 'item',
-            formatter: params => {
-                const percent = Number.isFinite(params.percent) ? params.percent.toFixed(1) : '0.0';
-                return `${params.marker}${params.name}<br/>占比：${percent}%<br/>平均时长：${formatDuration(params.value)}`;
-            }
-        },
-        legend: {
-            orient: 'horizontal',
-            bottom: 10,
-            left: 'center'
-        },
-        series: [{
-            name: '状态时长分布',
-            type: 'pie',
-            radius: ['40%', '65%'],
-            center: ['50%', '50%'],
-            data: pieData,
-            label: {
-                formatter: info => `${info.name}\n${Number(info.percent).toFixed(1)}%`
+        setChartEmptyState(slaComparisonChart, slaComparisonChartContainer, null);
+
+        const option = {
+            title: {
+                text: '可用率对比 (今日/近7天/近30天)',
+                left: 'center',
+                top: 10,
+                textStyle: {
+                    fontSize: 14,
+                    fontWeight: 'normal'
+                }
             },
-            emphasis: {
-                scale: true,
-                scaleSize: 8
-            }
-        }]
-    }, true);
-}
+            tooltip: {
+                trigger: 'axis',
+                axisPointer: {
+                    type: 'shadow'
+                },
+                formatter: params => {
+                    if (!params || !params.length) return '';
+                    const siteName = params[0].axisValue;
+                    let result = `<strong>${siteName}</strong><br/>`;
+                    params.forEach(item => {
+                        const value = Number.isFinite(item.value) ? item.value.toFixed(2) : '--';
+                        const nineCount = calculateNineCount(item.value);
+                        let ninesLabel = '';
+                        if (nineCount !== null) {
+                            if (!Number.isFinite(nineCount)) {
+                                ninesLabel = ' (∞个9)';
+                            } else if (nineCount > 0) {
+                                ninesLabel = ` (${nineCount}个9)`;
+                            }
+                        }
+                        result += `${item.marker}${item.seriesName}: ${value}%${ninesLabel}<br/>`;
+                    });
+                    return result;
+                }
+            },
+            legend: {
+                data: ['今日', '近7天', '近30天'],
+                top: 40,
+                left: 'center'
+            },
+            grid: {
+                left: 100,
+                right: 30,
+                top: 80,
+                bottom: 30,
+                containLabel: false
+            },
+            xAxis: {
+                type: 'value',
+                max: 100,
+                axisLabel: {
+                    formatter: '{value}%'
+                }
+            },
+            yAxis: {
+                type: 'category',
+                data: slaData.map(item => item.name),
+                axisLabel: {
+                    interval: 0
+                }
+            },
+            series: [
+                {
+                    name: '今日',
+                    type: 'bar',
+                    data: slaData.map(item => Number(item.today.toFixed(4))),
+                    itemStyle: {
+                        color: function(params) {
+                            const value = params.value;
+                            if (value >= 99.99) return '#2ecc71';
+                            if (value >= 99.9) return '#67C23A';
+                            if (value >= 99) return '#91cc75';
+                            if (value >= 95) return '#E6A23C';
+                            return '#F56C6C';
+                        }
+                    },
+                    label: {
+                        show: true,
+                        position: 'right',
+                        formatter: params => `${Number(params.value).toFixed(2)}%`,
+                        fontSize: 11
+                    }
+                },
+                {
+                    name: '近7天',
+                    type: 'bar',
+                    data: slaData.map(item => Number(item.week.toFixed(4))),
+                    itemStyle: {
+                        color: function(params) {
+                            const value = params.value;
+                            if (value >= 99.99) return '#3498db';
+                            if (value >= 99.9) return '#5dade2';
+                            if (value >= 99) return '#85c1e9';
+                            if (value >= 95) return '#f39c12';
+                            return '#e74c3c';
+                        }
+                    },
+                    label: {
+                        show: true,
+                        position: 'right',
+                        formatter: params => `${Number(params.value).toFixed(2)}%`,
+                        fontSize: 11
+                    }
+                },
+                {
+                    name: '近30天',
+                    type: 'bar',
+                    data: slaData.map(item => Number(item.month.toFixed(4))),
+                    itemStyle: {
+                        color: function(params) {
+                            const value = params.value;
+                            if (value >= 99.99) return '#8e44ad';
+                            if (value >= 99.9) return '#9b59b6';
+                            if (value >= 99) return '#af7ac5';
+                            if (value >= 95) return '#e67e22';
+                            return '#c0392b';
+                        }
+                    },
+                    label: {
+                        show: true,
+                        position: 'right',
+                        formatter: params => `${Number(params.value).toFixed(2)}%`,
+                        fontSize: 11
+                    }
+                }
+            ]
+        };
+
+        slaComparisonChart.setOption(option, true);
+    }
 
     function renderAlertHistory(data, options = {}) {
         if (!alertHistoryBody || !alertHistoryEmptyState || !alertHistoryTable) {
@@ -886,8 +1090,8 @@ document.addEventListener('DOMContentLoaded', () => {
             setChartEmptyState(timelineChart, timelineChartContainer, '请选择至少一个网站以查看历史数据');
             setChartEmptyState(uptimeChart, uptimeChartContainer, '请选择至少一个网站以查看可用率');
             setChartEmptyState(responseTimeChart, responseTimeChartContainer, '请选择至少一个网站以查看响应时间');
-            if (statusDistributionChart && statusDistributionChartContainer) {
-                setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '请选择至少一个网站以查看状态分布');
+            if (slaComparisonChart && slaComparisonChartContainer) {
+                setChartEmptyState(slaComparisonChart, slaComparisonChartContainer, '请选择至少一个网站以查看 SLA 对比');
             }
             latestHistoryData = null;
             renderAlertHistory(null, { emptyMessage: '请选择站点以查看告警' });
@@ -895,9 +1099,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         setChartEmptyState(timelineChart, timelineChartContainer, null);
         timelineChart.showLoading();
-        if (statusDistributionChart && statusDistributionChartContainer) {
-            setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, null);
-            statusDistributionChart.showLoading('');
+        if (slaComparisonChart && slaComparisonChartContainer) {
+            setChartEmptyState(slaComparisonChart, slaComparisonChartContainer, null);
+            slaComparisonChart.showLoading('');
         }
         const siteParams = selectedSites.map(s => `sites=${encodeURIComponent(s)}`).join('&');
         const timeParams = `start_time=${currentParams.start_iso}&end_time=${currentParams.end_iso}`;
@@ -911,15 +1115,15 @@ document.addEventListener('DOMContentLoaded', () => {
             updateSummaryCards(data, selectedSites);
             renderUptimeHistory(data);
             renderComparisonCharts(data);
-            renderStatusDistribution(data);
+            renderSLAComparison(data);
             renderAlertHistory(data);
         } catch (error) {
             console.error(error);
             setChartEmptyState(timelineChart, timelineChartContainer, '数据加载失败，请稍后重试');
             setChartEmptyState(uptimeChart, uptimeChartContainer, '数据加载失败');
             setChartEmptyState(responseTimeChart, responseTimeChartContainer, '数据加载失败');
-            if (statusDistributionChart) {
-                setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '数据加载失败');
+            if (slaComparisonChart) {
+                setChartEmptyState(slaComparisonChart, slaComparisonChartContainer, '数据加载失败');
             }
             renderAlertHistoryError('数据加载失败');
         } finally {

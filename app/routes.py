@@ -698,6 +698,16 @@ def get_history():
         availability = (up_count / len(logs) * 100) if logs else 0
         valid_times = [log.response_time_seconds for log in logs if log.response_time_seconds is not None]
         avg_response_time = sum(valid_times) / len(valid_times) if valid_times else 0
+        
+        # 计算 P95 和 P99
+        p95_response_time = 0
+        p99_response_time = 0
+        if valid_times:
+            sorted_times = sorted(valid_times)
+            p95_index = int(len(sorted_times) * 0.95)
+            p99_index = int(len(sorted_times) * 0.99)
+            p95_response_time = sorted_times[min(p95_index, len(sorted_times) - 1)]
+            p99_response_time = sorted_times[min(p99_index, len(sorted_times) - 1)]
 
         response_points = []
         for log in logs:
@@ -706,11 +716,30 @@ def get_history():
             timestamp_ms = int(gmt8_timestamp.timestamp() * 1000) if gmt8_timestamp else None
             response_points.append((timestamp_str, timestamp_ms, log.response_time_seconds))
 
+        # 计算 SLA 统计（今日、近7天、近30天）
+        now_utc = datetime.datetime.now(timezone.utc)
+        today_start = datetime.datetime.combine(now_utc.date(), datetime.time.min, tzinfo=timezone.utc)
+        week_start = now_utc - datetime.timedelta(days=7)
+        month_start = now_utc - datetime.timedelta(days=30)
+        
+        def calc_availability_for_period(period_start, period_end):
+            period_logs = [log for log in logs if period_start <= log.timestamp.replace(tzinfo=timezone.utc) <= period_end]
+            if not period_logs:
+                return availability  # 如果没有数据，返回整体可用率
+            period_up_count = sum(1 for log in period_logs if log.status in ['正常', '访问过慢'])
+            return (period_up_count / len(period_logs) * 100) if period_logs else 0
+        
+        sla_today = calc_availability_for_period(today_start, now_utc)
+        sla_week = calc_availability_for_period(week_start, now_utc)
+        sla_month = calc_availability_for_period(month_start, now_utc)
+
         results[site] = {
             "timeline_data": timeline_data,
             "overall_stats": {
                 "availability": availability,
-                "avg_response_time": avg_response_time
+                "avg_response_time": avg_response_time,
+                "p95_response_time": p95_response_time,
+                "p99_response_time": p99_response_time
             },
             "response_times": {
                 "timestamps": [point[0] for point in response_points],
@@ -718,5 +747,10 @@ def get_history():
                 "times": [point[2] for point in response_points]
             },
             "incidents": incidents,
+            "sla_stats": {
+                "today": sla_today,
+                "week": sla_week,
+                "month": sla_month
+            }
         }
     return jsonify(results)
