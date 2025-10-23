@@ -209,6 +209,7 @@ class MonitoringSettingsView(BaseView):
             ('recovery_confirmation_threshold', '恢复确认次数'),
             ('quick_retry_count', '快速重试次数'),
             ('quick_retry_delay_seconds', '快速重试间隔 (秒)'),
+            ('alert_suppression_seconds', '告警降噪周期 (秒)'),
             ('data_retention_days', '数据保留天数')
         ]
         original_snapshot = {field: getattr(config_record, field) for field, _ in field_labels}
@@ -698,6 +699,13 @@ def get_history():
         valid_times = [log.response_time_seconds for log in logs if log.response_time_seconds is not None]
         avg_response_time = sum(valid_times) / len(valid_times) if valid_times else 0
 
+        response_points = []
+        for log in logs:
+            gmt8_timestamp = to_gmt8(log.timestamp)
+            timestamp_str = gmt8_timestamp.strftime('%Y-%m-%d %H:%M') if gmt8_timestamp else ''
+            timestamp_ms = int(gmt8_timestamp.timestamp() * 1000) if gmt8_timestamp else None
+            response_points.append((timestamp_str, timestamp_ms, log.response_time_seconds))
+
         results[site] = {
             "timeline_data": timeline_data,
             "overall_stats": {
@@ -705,8 +713,9 @@ def get_history():
                 "avg_response_time": avg_response_time
             },
             "response_times": {
-                "timestamps": [to_gmt8(log.timestamp).strftime('%Y-%m-%d %H:%M') for log in logs],
-                "times": [log.response_time_seconds for log in logs]
+                "timestamps": [point[0] for point in response_points],
+                "timestamps_ms": [point[1] for point in response_points],
+                "times": [point[2] for point in response_points]
             },
             "incidents": incidents,
         }

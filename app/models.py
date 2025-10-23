@@ -95,6 +95,7 @@ class MonitoringConfig(db.Model):
     recovery_confirmation_threshold = db.Column(db.Integer, nullable=False, default=2)
     quick_retry_count = db.Column(db.Integer, nullable=False, default=1)
     quick_retry_delay_seconds = db.Column(db.Integer, nullable=False, default=2)
+    alert_suppression_seconds = db.Column(db.Integer, nullable=False, default=600)
     data_retention_days = db.Column(db.Integer, nullable=False, default=30)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False)
     updated_at = db.Column(
@@ -108,6 +109,13 @@ class MonitoringConfig(db.Model):
     def ensure(cls, fallback_config: dict):
         instance = cls.query.first()
         if not instance:
+            raw_alert_suppression = fallback_config.get('ALERT_SUPPRESSION_SECONDS', 600)
+            try:
+                alert_suppression_value = int(raw_alert_suppression)
+            except (TypeError, ValueError):
+                alert_suppression_value = 600
+            alert_suppression_value = max(0, alert_suppression_value)
+
             instance = cls(
                 monitor_interval_seconds=fallback_config.get('MONITOR_INTERVAL_SECONDS', 20),
                 slow_response_threshold_seconds=fallback_config.get(
@@ -123,6 +131,7 @@ class MonitoringConfig(db.Model):
                 recovery_confirmation_threshold=fallback_config.get('RECOVERY_CONFIRMATION_THRESHOLD', 2),
                 quick_retry_count=fallback_config.get('QUICK_RETRY_COUNT', 1),
                 quick_retry_delay_seconds=fallback_config.get('QUICK_RETRY_DELAY_SECONDS', 2),
+                alert_suppression_seconds=alert_suppression_value,
                 data_retention_days=fallback_config.get('DATA_RETENTION_DAYS', 30),
             )
             db.session.add(instance)
@@ -142,6 +151,7 @@ class MonitoringConfig(db.Model):
         app_config['RECOVERY_CONFIRMATION_THRESHOLD'] = self.recovery_confirmation_threshold
         app_config['QUICK_RETRY_COUNT'] = self.quick_retry_count
         app_config['QUICK_RETRY_DELAY_SECONDS'] = self.quick_retry_delay_seconds
+        app_config['ALERT_SUPPRESSION_SECONDS'] = self.alert_suppression_seconds
         app_config['DATA_RETENTION_DAYS'] = self.data_retention_days
 
     def populate_form(self, form):
@@ -157,6 +167,7 @@ class MonitoringConfig(db.Model):
         form.recovery_confirmation_threshold.data = self.recovery_confirmation_threshold
         form.quick_retry_count.data = self.quick_retry_count
         form.quick_retry_delay_seconds.data = self.quick_retry_delay_seconds
+        form.alert_suppression_seconds.data = self.alert_suppression_seconds
         form.data_retention_days.data = self.data_retention_days
 
     def update_from_form(self, form):
@@ -172,6 +183,7 @@ class MonitoringConfig(db.Model):
         self.recovery_confirmation_threshold = form.recovery_confirmation_threshold.data
         self.quick_retry_count = form.quick_retry_count.data
         self.quick_retry_delay_seconds = form.quick_retry_delay_seconds.data
+        self.alert_suppression_seconds = form.alert_suppression_seconds.data
         self.data_retention_days = form.data_retention_days.data
 
     def __repr__(self):

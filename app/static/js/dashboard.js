@@ -28,6 +28,14 @@ document.addEventListener('DOMContentLoaded', () => {
         incidentHint: document.getElementById('summary-incident-hint')
     };
 
+    let latestHistoryData = null;
+    const alertFilters = {
+        status: 'unresolved',
+        type: 'all'
+    };
+    const alertStatusFilter = document.getElementById('alert-status-filter');
+    const alertTypeFilter = document.getElementById('alert-type-filter');
+
     const initialStatuses = window.INITIAL_STATUSES;
     const dataRetentionDays = 30; // 固定为30天
     let currentParams = {};
@@ -38,6 +46,135 @@ document.addEventListener('DOMContentLoaded', () => {
         1: '#91cc75',
         2: '#fac858',
         3: '#ee6666'
+    };
+
+    const calculateNineCount = (availability) => {
+        if (!Number.isFinite(availability)) {
+            return null;
+        }
+        if (availability >= 100) {
+            return Infinity;
+        }
+        const downtimeRatio = 1 - availability / 100;
+        if (downtimeRatio <= 0) {
+            return Infinity;
+        }
+        const nineCount = Math.floor(-Math.log10(downtimeRatio));
+        return Math.max(0, nineCount);
+    };
+
+    const describeAvailability = (availability) => {
+        if (!Number.isFinite(availability)) {
+            return {
+                valueText: '--',
+                combined: '--',
+                ninesLabel: '',
+                nineCount: null,
+            };
+        }
+        const valueText = `${availability.toFixed(2)}%`;
+        const nineCount = calculateNineCount(availability);
+        let ninesLabel = '';
+        if (nineCount === null) {
+            ninesLabel = '';
+        } else if (!Number.isFinite(nineCount)) {
+            ninesLabel = '∞个9';
+        } else if (nineCount <= 0) {
+            ninesLabel = '不足1个9';
+        } else {
+            ninesLabel = `${nineCount}个9`;
+        }
+        const combined = ninesLabel ? `${valueText} · ${ninesLabel}` : valueText;
+        return {
+            valueText,
+            combined,
+            ninesLabel,
+            nineCount,
+        };
+    };
+
+    const parseDate = (value) => {
+        if (!value) {
+            return null;
+        }
+        const direct = new Date(value);
+        if (!Number.isNaN(direct.getTime())) {
+            return direct;
+        }
+        const fallback = new Date(String(value).replace(' ', 'T'));
+        if (!Number.isNaN(fallback.getTime())) {
+            return fallback;
+        }
+        return null;
+    };
+
+    const getTimeRangeSpanMs = () => {
+        const start = parseDate(currentParams.start_iso);
+        const end = parseDate(currentParams.end_iso);
+        if (!start || !end) {
+            return null;
+        }
+        const diff = end.getTime() - start.getTime();
+        return Number.isFinite(diff) ? Math.abs(diff) : null;
+    };
+
+    const formatChartAxisTime = (value) => {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return '';
+        }
+        const span = getTimeRangeSpanMs();
+        const ONE_DAY = 24 * 60 * 60 * 1000;
+        const ONE_WEEK = 7 * ONE_DAY;
+        if (!span || span <= ONE_DAY) {
+            return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+        }
+        if (span <= ONE_WEEK) {
+            return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+        }
+        return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    };
+
+    const formatChartTooltipTime = (value) => {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return '--';
+        }
+        return date.toLocaleString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        });
+    };
+
+    const buildAlertEmptyMessage = () => {
+        const statusLabelMap = {
+            unresolved: '未恢复',
+            resolved: '已恢复',
+            all: ''
+        };
+        const typeLabelMap = {
+            down: '宕机',
+            slow: '访问过慢',
+            all: ''
+        };
+        const parts = [];
+        const statusLabel = statusLabelMap[alertFilters.status];
+        if (statusLabel) {
+            parts.push(statusLabel);
+        }
+        const typeLabel = typeLabelMap[alertFilters.type];
+        if (typeLabel) {
+            parts.push(typeLabel);
+        }
+        if (parts.length === 0) {
+            return '当前筛选条件下暂无告警';
+        }
+        return `当前筛选条件下暂无${parts.join(' · ')}告警`;
     };
 
     const formatDuration = (ms) => {
@@ -156,6 +293,9 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
 
+        const startBoundary = parseDate(currentParams.start_iso);
+        const endBoundary = parseDate(currentParams.end_iso);
+
         const option = {
             tooltip: {
                 trigger: 'item',
@@ -168,11 +308,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     const seriesName = params.seriesName;
                     const details = params.value[4];
-                    const startTime = new Date(params.value[1]);
-                    const endTime = new Date(params.value[2]);
-                    const timeFormat = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-                    const timeRangeStr = `${startTime.toLocaleTimeString('zh-CN', timeFormat)} - ${endTime.toLocaleTimeString('zh-CN', timeFormat)}`;
-                    return `<strong>${seriesName}</strong><br/>时间: ${timeRangeStr}<br/>${details}`;
+                    const startLabel = formatChartTooltipTime(params.value[1]);
+                    const endLabel = formatChartTooltipTime(params.value[2]);
+                    return `<strong>${seriesName}</strong><br/>时间: ${startLabel} - ${endLabel}<br/>${details}`;
                 }
             },
             dataZoom: [
@@ -195,12 +333,10 @@ document.addEventListener('DOMContentLoaded', () => {
             grid: { top: 25, left: 120, right: 30, bottom: 90 },
             xAxis: {
                 type: 'time',
-                min: new Date(currentParams.start_iso),
-                max: new Date(currentParams.end_iso),
+                min: startBoundary,
+                max: endBoundary,
                 axisLabel: {
-                    formatter: function (value) {
-                        return new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
-                    }
+                    formatter: value => formatChartAxisTime(value)
                 }
             },
             yAxis: { type: 'category', data: siteNames, axisLabel: { interval: 0 } },
@@ -218,36 +354,81 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const uptimeCategories = [];
-        const uptimeData = [];
+        const uptimeSeriesData = [];
         const responseTimeLegends = [];
         const responseTimeSeries = [];
-        let allTimestamps = new Set();
+        const timestampSet = new Set();
+        const timestampLabelMap = new Map();
+        const siteResponseMaps = new Map();
 
         siteKeys.forEach(siteName => {
-            const siteData = data[siteName];
-            if (siteData.response_times.timestamps.length > 0) {
-                siteData.response_times.timestamps.forEach(t => allTimestamps.add(t));
-            }
-        });
+            const siteData = data[siteName] || {};
 
-        const sortedTimestamps = Array.from(allTimestamps).sort();
-
-        siteKeys.forEach(siteName => {
-            const siteData = data[siteName];
             if (siteData.overall_stats) {
                 const availability = siteData.overall_stats.availability;
                 if (Number.isFinite(availability)) {
+                    const availabilityInfo = describeAvailability(availability);
                     uptimeCategories.push(siteName);
-                    uptimeData.push(parseFloat(availability.toFixed(2)));
+                    uptimeSeriesData.push({
+                        value: Number(availability.toFixed(4)),
+                        rawValue: availability,
+                        combinedLabel: availabilityInfo.combined,
+                        ninesLabel: availabilityInfo.ninesLabel,
+                    });
                 }
             }
 
-            const rtData = siteData.response_times;
-            if (rtData.timestamps.length > 0) {
+            const rtData = siteData.response_times || {};
+            const timestampsMs = Array.isArray(rtData.timestamps_ms) ? rtData.timestamps_ms : [];
+            const timestampLabels = Array.isArray(rtData.timestamps) ? rtData.timestamps : [];
+            const responseTimes = Array.isArray(rtData.times) ? rtData.times : [];
+            const siteTimestampMap = new Map();
+
+            if (timestampsMs.length > 0) {
+                timestampsMs.forEach((ts, idx) => {
+                    if (!Number.isFinite(ts)) {
+                        return;
+                    }
+                    timestampSet.add(ts);
+                    const label = timestampLabels[idx] || formatChartTooltipTime(ts);
+                    if (label && !timestampLabelMap.has(ts)) {
+                        timestampLabelMap.set(ts, label);
+                    }
+                    const value = idx < responseTimes.length ? responseTimes[idx] : null;
+                    siteTimestampMap.set(ts, value === null || value === undefined ? null : Number(value));
+                });
+            }
+
+            if (siteTimestampMap.size === 0 && timestampLabels.length > 0) {
+                timestampLabels.forEach((label, idx) => {
+                    if (!label) {
+                        return;
+                    }
+                    const parsed = Date.parse(label.replace(' ', 'T'));
+                    if (Number.isNaN(parsed)) {
+                        return;
+                    }
+                    timestampSet.add(parsed);
+                    if (!timestampLabelMap.has(parsed)) {
+                        timestampLabelMap.set(parsed, label);
+                    }
+                    const value = idx < responseTimes.length ? responseTimes[idx] : null;
+                    siteTimestampMap.set(parsed, value === null || value === undefined ? null : Number(value));
+                });
+            }
+
+            siteResponseMaps.set(siteName, siteTimestampMap);
+        });
+
+        const sortedTimestamps = Array.from(timestampSet).sort((a, b) => a - b);
+
+        siteKeys.forEach(siteName => {
+            const siteTimestampMap = siteResponseMaps.get(siteName);
+            if (siteTimestampMap && siteTimestampMap.size > 0) {
                 responseTimeLegends.push(siteName);
                 const seriesData = sortedTimestamps.map(ts => {
-                    const index = rtData.timestamps.indexOf(ts);
-                    return index > -1 ? rtData.times[index] : null;
+                    const value = siteTimestampMap.has(ts) ? siteTimestampMap.get(ts) : null;
+                    return [ts, value];
                 });
                 responseTimeSeries.push({
                     name: siteName,
@@ -266,18 +447,43 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             setChartEmptyState(uptimeChart, uptimeChartContainer, null);
             uptimeChart.setOption({
-                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: { type: 'shadow' },
+                    formatter: params => {
+                        if (!params || !params.length) {
+                            return '';
+                        }
+                        const item = params[0];
+                        const dataItem = item.data || {};
+                        const combined = dataItem.combinedLabel || `${Number(item.value).toFixed(2)}%`;
+                        return `${item.marker}${item.name}<br/>可用率：${combined}`;
+                    }
+                },
                 grid: { top: 40, left: 60, right: 30, bottom: 70 },
                 xAxis: { type: 'category', data: uptimeCategories, axisLabel: { interval: 0 } },
                 yAxis: { type: 'value', max: 100, axisLabel: { formatter: '{value}%' } },
                 series: [{
                     type: 'bar',
                     barWidth: '45%',
-                    data: uptimeData,
-                    label: { show: true, position: 'top', formatter: '{c}%', color: '#333' },
+                    data: uptimeSeriesData,
+                    label: {
+                        show: true,
+                        position: 'top',
+                        formatter: params => {
+                            const dataItem = params.data || {};
+                            if (dataItem.combinedLabel) {
+                                return dataItem.combinedLabel;
+                            }
+                            return `${Number(params.value).toFixed(2)}%`;
+                        },
+                        color: '#333'
+                    },
                     itemStyle: {
                         color: function (params) {
-                            const value = parseFloat(params.value);
+                            const dataItem = params.data || {};
+                            const value = Number.isFinite(dataItem.rawValue) ? dataItem.rawValue : Number(params.value);
+                            if (value >= 99.99) return '#2ecc71';
                             if (value >= 99.9) return '#67C23A';
                             if (value >= 99) return '#91cc75';
                             if (value >= 95) return '#E6A23C';
@@ -288,27 +494,43 @@ document.addEventListener('DOMContentLoaded', () => {
             }, true);
         }
 
+        const startBoundary = parseDate(currentParams.start_iso);
+        const endBoundary = parseDate(currentParams.end_iso);
+
         if (responseTimeSeries.length === 0 || sortedTimestamps.length === 0) {
             setChartEmptyState(responseTimeChart, responseTimeChartContainer, '暂无响应时间数据');
         } else {
             setChartEmptyState(responseTimeChart, responseTimeChartContainer, null);
 
             responseTimeChart.setOption({
-                tooltip: { trigger: 'axis' },
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: params => {
+                        if (!params || !params.length) {
+                            return '';
+                        }
+                        const first = params[0];
+                        const value = Array.isArray(first.value) ? first.value[0] : first.axisValue;
+                        const numericValue = Number(value);
+                        const label = timestampLabelMap.get(numericValue) || formatChartTooltipTime(numericValue);
+                        const lines = [`<strong>${label}</strong>`];
+                        params.forEach(item => {
+                            const val = Array.isArray(item.value) ? item.value[1] : item.data;
+                            const valueText = Number.isFinite(val) ? `${Number(val).toFixed(2)} 秒` : '--';
+                            lines.push(`${item.marker}${item.seriesName}：${valueText}`);
+                        });
+                        return lines.join('<br/>');
+                    }
+                },
                 legend: { data: responseTimeLegends, top: 10, type: 'scroll' },
                 grid: { top: 70, left: 60, right: 50, bottom: 120 },
                 xAxis: {
-                    type: 'category',
+                    type: 'time',
                     boundaryGap: false,
-                    data: sortedTimestamps,
+                    min: startBoundary,
+                    max: endBoundary,
                     axisLabel: {
-                        rotate: 0,
-                        hideOverlap: true,
-                        interval: 'auto',
-                        formatter: function(value) {
-                            // 智能格式化时间标签
-                            return value.replace(/:\d{2}$/, ''); // 移除秒数
-                        }
+                        formatter: value => formatChartAxisTime(value)
                     }
                 },
                 yAxis: { type: 'value', name: '响应时间 (秒)', nameGap: 30 },
@@ -326,7 +548,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     },
                     {
                         type: 'inside',
-                        disabled: true  // 禁用内部缩放
+                        disabled: true
                     }
                 ],
                 series: responseTimeSeries
@@ -435,12 +657,27 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!alertHistoryBody || !alertHistoryEmptyState || !alertHistoryTable) {
             return;
         }
-        const { emptyMessage = defaultAlertHistoryMessage } = options;
-        const effectiveEmptyMessage = emptyMessage || defaultAlertHistoryMessage;
-        const incidents = [];
+
+        if (data === null) {
+            alertHistoryBody.innerHTML = '';
+            alertHistoryTable.style.display = 'none';
+            alertHistoryEmptyState.textContent = options.emptyMessage || defaultAlertHistoryMessage;
+            alertHistoryEmptyState.style.display = 'block';
+            if (alertHistoryFootnote) {
+                alertHistoryFootnote.style.display = 'none';
+            }
+            return;
+        }
 
         if (data && typeof data === 'object') {
-            Object.entries(data).forEach(([siteName, siteData]) => {
+            latestHistoryData = data;
+        }
+
+        const sourceData = data && typeof data === 'object' ? data : latestHistoryData;
+        const incidents = [];
+
+        if (sourceData && typeof sourceData === 'object') {
+            Object.entries(sourceData).forEach(([siteName, siteData]) => {
                 (siteData.incidents || []).forEach(incident => {
                     incidents.push({
                         site_name: siteName,
@@ -456,10 +693,29 @@ document.addEventListener('DOMContentLoaded', () => {
             return bValue - aValue;
         });
 
-        if (incidents.length === 0) {
+        const filteredIncidents = incidents.filter(incident => {
+            const statusFilter = alertFilters.status;
+            let statusMatch = true;
+            if (statusFilter === 'resolved') {
+                statusMatch = incident.resolved === true;
+            } else if (statusFilter === 'unresolved') {
+                statusMatch = incident.resolved === false || incident.resolved === undefined || incident.resolved === null;
+            }
+
+            const typeFilter = alertFilters.type;
+            let typeMatch = true;
+            if (typeFilter !== 'all') {
+                typeMatch = incident.status_key === typeFilter;
+            }
+            return statusMatch && typeMatch;
+        });
+
+        if (filteredIncidents.length === 0) {
             alertHistoryBody.innerHTML = '';
             alertHistoryTable.style.display = 'none';
-            alertHistoryEmptyState.textContent = effectiveEmptyMessage;
+            const message = options.emptyMessage
+                || (incidents.length === 0 ? defaultAlertHistoryMessage : buildAlertEmptyMessage());
+            alertHistoryEmptyState.textContent = message;
             alertHistoryEmptyState.style.display = 'block';
             if (alertHistoryFootnote) {
                 alertHistoryFootnote.style.display = 'none';
@@ -467,11 +723,10 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        alertHistoryEmptyState.textContent = effectiveEmptyMessage;
         alertHistoryEmptyState.style.display = 'none';
         alertHistoryTable.style.display = '';
 
-        const limitedIncidents = incidents.slice(0, ALERT_HISTORY_LIMIT);
+        const limitedIncidents = filteredIncidents.slice(0, ALERT_HISTORY_LIMIT);
         const rowsHtml = limitedIncidents.map(incident => {
             const badgeClass = incident.status_key === 'down'
                 ? 'alert-badge--down'
@@ -509,7 +764,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         alertHistoryBody.innerHTML = rowsHtml;
         if (alertHistoryFootnote) {
-            alertHistoryFootnote.style.display = incidents.length > ALERT_HISTORY_LIMIT ? 'block' : 'none';
+            alertHistoryFootnote.style.display = filteredIncidents.length > ALERT_HISTORY_LIMIT ? 'block' : 'none';
         }
     }
 
@@ -517,6 +772,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!alertHistoryBody || !alertHistoryEmptyState || !alertHistoryTable) {
             return;
         }
+        latestHistoryData = null;
         alertHistoryBody.innerHTML = '';
         alertHistoryTable.style.display = 'none';
         alertHistoryEmptyState.textContent = message || '数据加载失败';
@@ -524,6 +780,32 @@ document.addEventListener('DOMContentLoaded', () => {
         if (alertHistoryFootnote) {
             alertHistoryFootnote.style.display = 'none';
         }
+    }
+
+    const refreshAlertHistory = () => {
+        if (latestHistoryData) {
+            renderAlertHistory(latestHistoryData);
+        }
+    };
+
+    if (alertStatusFilter) {
+        if (alertStatusFilter.value) {
+            alertFilters.status = alertStatusFilter.value;
+        }
+        alertStatusFilter.addEventListener('change', event => {
+            alertFilters.status = event.target.value;
+            refreshAlertHistory();
+        });
+    }
+
+    if (alertTypeFilter) {
+        if (alertTypeFilter.value) {
+            alertFilters.type = alertTypeFilter.value;
+        }
+        alertTypeFilter.addEventListener('change', event => {
+            alertFilters.type = event.target.value;
+            refreshAlertHistory();
+        });
     }
 
     function updateSummaryCards(data, selectedSites) {
@@ -566,8 +848,28 @@ document.addEventListener('DOMContentLoaded', () => {
         const avgAvailability = availabilityCount ? (availabilitySum / availabilityCount) : null;
         const avgResponse = responseCount ? (responseSum / responseCount) : null;
         const totalIncidents = downSegments + slowSegments;
-        summaryElements.avgUptime.textContent = avgAvailability !== null ? `${avgAvailability.toFixed(2)}%` : '--';
-        summaryElements.avgResponse.textContent = avgResponse !== null ? avgResponse.toFixed(2) : '0.00';
+
+        if (summaryElements.avgUptime) {
+            if (avgAvailability !== null) {
+                const availabilityInfo = describeAvailability(avgAvailability);
+                summaryElements.avgUptime.textContent = availabilityInfo.combined;
+                if (availabilityInfo.valueText && availabilityInfo.valueText !== '--') {
+                    summaryElements.avgUptime.title = availabilityInfo.ninesLabel
+                        ? `${availabilityInfo.valueText}（${availabilityInfo.ninesLabel}）`
+                        : availabilityInfo.valueText;
+                } else {
+                    summaryElements.avgUptime.removeAttribute('title');
+                }
+            } else {
+                summaryElements.avgUptime.textContent = '--';
+                summaryElements.avgUptime.removeAttribute('title');
+            }
+        }
+
+        if (summaryElements.avgResponse) {
+            summaryElements.avgResponse.textContent = avgResponse !== null ? avgResponse.toFixed(2) : '--';
+        }
+
         summaryElements.incidents.textContent = String(totalIncidents);
         if (summaryElements.incidentHint) {
             summaryElements.incidentHint.textContent = totalIncidents > 0 ? `宕机：${downSegments} · 慢：${slowSegments}` : '宕机 + 性能告警';
@@ -583,6 +885,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (statusDistributionChart && statusDistributionChartContainer) {
                 setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '请选择至少一个网站以查看状态分布');
             }
+            latestHistoryData = null;
             renderAlertHistory(null, { emptyMessage: '请选择站点以查看告警' });
             return;
         }
@@ -600,6 +903,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(`API 请求失败: ${response.status}`);
             }
             const data = await response.json();
+            latestHistoryData = data;
             updateSummaryCards(data, selectedSites);
             renderUptimeHistory(data);
             renderComparisonCharts(data);

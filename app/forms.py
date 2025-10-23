@@ -94,6 +94,9 @@ class MonitoringSettingsForm(FlaskForm):
     quick_retry_delay_seconds = IntegerField(
         '快速重试间隔 (秒)', validators=[DataRequired(), NumberRange(min=0, max=60)]
     )
+    alert_suppression_seconds = IntegerField(
+        '告警降噪周期 (秒)', validators=[DataRequired(), NumberRange(min=0, max=86400)]
+    )
     data_retention_days = IntegerField(
         '数据保留天数', validators=[DataRequired(), NumberRange(min=1, max=30)]
     )
