@@ -15,12 +15,14 @@ from .forms import (
     LoginForm,
     MonitoringSettingsForm,
     MonitoredSiteForm,
+    NotificationChannelForm,
     PasswordResetForm,
 )
 from .models import (
     HealthCheckLog,
     MonitoringConfig,
     MonitoredSite,
+    NotificationChannel,
     PasswordResetToken,
     User,
 )
@@ -42,109 +44,6 @@ def format_datetime_gmt8(view, context, model, name):
     gmt8_dt = to_gmt8(utc_dt)
     return gmt8_dt.strftime('%Y-%m-%d %H:%M:%S') if gmt8_dt else ''
 
-
-class NotificationSettingsView(BaseView):
-    menu_icon_type = 'fa'
-    menu_icon_value = 'fa-bell'
-
-    @expose('/', methods=['GET', 'POST'])
-    def index(self):
-        if not current_user.is_authenticated:
-            return redirect(url_for('admin.login', next=request.url))
-        from .models import NotificationConfig
-        from .forms import NotificationSettingsForm
-
-        form = NotificationSettingsForm()
-        config_record = NotificationConfig.get_or_create()
-        if not form.is_submitted():
-            config_record.populate_form(form)
-        # 处理测试通知
-        if form.test_webhook.data and form.validate():
-            sample_payload = NotificationConfig.sample_payload()
-            # 临时应用表单配置
-            temp_config = {
-                'GENERIC_WEBHOOK_ENABLED': form.webhook_enabled.data,
-                'GENERIC_WEBHOOK_URL': form.webhook_url.data,
-                'GENERIC_WEBHOOK_CONTENT_TYPE': form.webhook_content_type.data or 'application/json',
-                'GENERIC_WEBHOOK_TEMPLATE': form.webhook_template.data
-            }
-            if form.webhook_headers.data:
-                try:
-                    import json
-                    temp_config['GENERIC_WEBHOOK_HEADERS'] = json.loads(form.webhook_headers.data)
-                except:
-                    temp_config['GENERIC_WEBHOOK_HEADERS'] = {}
-            else:
-                temp_config['GENERIC_WEBHOOK_HEADERS'] = {}
-
-            # 临时更新 app.config
-            old_config = {}
-            for key, value in temp_config.items():
-                old_config[key] = current_app.config.get(key)
-                current_app.config[key] = value
-
-            # 发送测试
-            from .services import send_generic_webhook
-            success = send_generic_webhook('test_notification', sample_payload)
-
-            # 恢复配置
-            for key, value in old_config.items():
-                current_app.config[key] = value
-
-            if success:
-                flash('测试通知发送成功！', 'success')
-            else:
-                flash('测试通知发送失败，请检查配置或查看日志。', 'danger')
-            return redirect(url_for('.index'))
-        # 保存配置
-        if form.submit.data and form.validate_on_submit():
-            try:
-                config_record.update_from_form(form)
-                db.session.commit()
-                config_record.apply_to_config(current_app.config)
-
-                operator = current_user.username if current_user.is_authenticated else None
-                details = [
-                    ('Webhook 状态', '已启用' if config_record.webhook_enabled else '已禁用'),
-                    ('Webhook URL', config_record.webhook_url or '未配置')
-                ]
-                send_management_notification('通知配置更新', operator=operator, details=details)
-
-                flash('通知配置已保存。', 'success')
-                return redirect(url_for('.index'))
-            except Exception as exc:
-                db.session.rollback()
-                current_app.logger.exception('保存通知配置失败: %s', exc)
-                flash('保存配置失败，请稍后重试。', 'danger')
-        elif form.is_submitted():
-            flash('请修正表单中的错误后再提交。', 'danger')
-        # 生成预览
-        preview_payload = None
-        preview_rendered = None
-        preview_error = None
-
-        if config_record.webhook_template:
-            from .services import render_webhook_template
-            preview_payload = NotificationConfig.sample_payload()
-            preview_rendered, preview_error = render_webhook_template(
-                config_record.webhook_template,
-                preview_payload
-            )
-        return self.render(
-            'admin/notification_settings.html',
-            form=form,
-            preview_rendered=preview_rendered,
-            preview_error=preview_error,
-            preview_payload=preview_payload,
-            default_template=NotificationConfig.DEFAULT_TEMPLATE
-        )
-
-    def is_accessible(self):
-        return current_user.is_authenticated
-
-    def _handle_view(self, name, **kwargs):
-        if not self.is_accessible():
-            return redirect(url_for('admin.login', next=request.url))
 
 
 # --- 安全后台的核心 ---
@@ -376,6 +275,134 @@ class SecureModelView(ModelView):
     def _handle_view(self, name, **kwargs):
         if not self.is_accessible():
             return redirect(url_for('admin.login', next=request.url))
+
+class NotificationChannelView(SecureModelView):
+    menu_icon_type = 'fa'
+    menu_icon_value = 'fa-bell'
+    form = NotificationChannelForm
+    can_view_details = True
+    column_list = [
+        'name',
+        'channel_type',
+        'is_enabled',
+        'webhook_url',
+        'notify_on_down',
+        'notify_on_recovered',
+        'notify_on_slow',
+        'notify_on_slow_recovered',
+        'notify_on_management',
+        'created_at',
+    ]
+    column_details_list = [
+        'name',
+        'channel_type',
+        'is_enabled',
+        'webhook_url',
+        'notify_on_down',
+        'notify_on_recovered',
+        'notify_on_slow',
+        'notify_on_slow_recovered',
+        'notify_on_management',
+        'custom_headers',
+        'custom_template',
+        'created_at',
+        'updated_at',
+    ]
+    column_labels = {
+        'name': '渠道名称',
+        'channel_type': '渠道类型',
+        'is_enabled': '启用',
+        'webhook_url': 'Webhook 地址',
+        'notify_on_down': '宕机',
+        'notify_on_recovered': '恢复',
+        'notify_on_slow': '慢响应',
+        'notify_on_slow_recovered': '慢响应恢复',
+        'notify_on_management': '配置变更',
+        'custom_headers': '自定义请求头',
+        'custom_template': '消息模板',
+        'created_at': '创建时间',
+        'updated_at': '更新时间',
+    }
+    column_filters = ['channel_type', 'is_enabled']
+    column_searchable_list = ['name', 'webhook_url']
+    form_excluded_columns = ['created_at', 'updated_at']
+    column_default_sort = ('created_at', True)
+    column_formatters = {
+        'channel_type': lambda view, context, model, name: NotificationChannelView.CHANNEL_TYPE_LABELS.get(
+            model.channel_type, model.channel_type
+        ),
+        'created_at': format_datetime_gmt8,
+        'updated_at': format_datetime_gmt8,
+    }
+
+    CHANNEL_TYPE_LABELS = {
+        NotificationChannel.TYPE_QYWECHAT: '企业微信',
+        NotificationChannel.TYPE_DINGTALK: '钉钉',
+        NotificationChannel.TYPE_FEISHU: '飞书',
+        NotificationChannel.TYPE_CUSTOM: '自定义 Webhook',
+    }
+
+    def create_form(self, obj=None):
+        form = super().create_form(obj)
+        if not form.custom_template.data:
+            form.custom_template.data = NotificationChannel.default_custom_template()
+        return form
+
+    def on_form_prefill(self, form, id):
+        channel = self.get_one(id)
+        if channel:
+            headers = channel.custom_headers or {}
+            form.custom_headers.data = json.dumps(headers, ensure_ascii=False, indent=2) if headers else ''
+            if channel.channel_type == NotificationChannel.TYPE_CUSTOM:
+                form.custom_template.data = channel.custom_template or NotificationChannel.default_custom_template()
+            else:
+                form.custom_template.data = ''
+        return super().on_form_prefill(form, id)
+
+    def on_model_change(self, form, model, is_created):
+        raw_headers = form.custom_headers.data or ''
+        if raw_headers.strip():
+            model.custom_headers = json.loads(raw_headers)
+        else:
+            model.custom_headers = {}
+        model.webhook_url = (form.webhook_url.data or '').strip() or None
+        if model.channel_type == NotificationChannel.TYPE_CUSTOM:
+            template = (form.custom_template.data or '').strip()
+            model.custom_template = template or NotificationChannel.default_custom_template()
+        else:
+            model.custom_template = None
+        return super().on_model_change(form, model, is_created)
+
+    def after_model_change(self, form, model, is_created):
+        operator = current_user.username if current_user.is_authenticated else None
+        action = '创建' if is_created else '更新'
+        events = [
+            ('宕机', model.notify_on_down),
+            ('恢复', model.notify_on_recovered),
+            ('慢响应', model.notify_on_slow),
+            ('慢响应恢复', model.notify_on_slow_recovered),
+            ('配置变更', model.notify_on_management),
+        ]
+        enabled_events = [label for label, enabled in events if enabled]
+        details = [
+            ('渠道名称', model.name),
+            ('渠道类型', self.CHANNEL_TYPE_LABELS.get(model.channel_type, model.channel_type)),
+            ('启用状态', '启用' if model.is_enabled else '禁用'),
+            ('通知事件', '、'.join(enabled_events) if enabled_events else '无'),
+            ('Webhook 地址', model.webhook_url or '未配置'),
+        ]
+        send_management_notification(f'通知渠道{action}', operator=operator, details=details)
+        return super().after_model_change(form, model, is_created)
+
+    def after_model_delete(self, model):
+        operator = current_user.username if current_user.is_authenticated else None
+        details = [
+            ('渠道名称', model.name),
+            ('渠道类型', self.CHANNEL_TYPE_LABELS.get(model.channel_type, model.channel_type)),
+        ]
+        send_management_notification('删除通知渠道', operator=operator, details=details)
+        return super().after_model_delete(model)
+
 
 # --- 路由蓝图 ---
 main_bp = Blueprint('main', __name__)

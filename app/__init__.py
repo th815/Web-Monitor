@@ -8,13 +8,14 @@ from flask_login import LoginManager
 
 from . import extensions
 from .commands import create_reset_token_command, init_db_command
-from .models import HealthCheckLog, MonitoredSite, MonitoringConfig, User
+from .models import HealthCheckLog, MonitoredSite, MonitoringConfig, NotificationChannel, User
 from .routes import (
     AuthenticatedMenuLink,
     HealthCheckLogView,
     MonitoringSettingsView,
     MonitoredSiteView,
     MyAdminIndexView,
+    NotificationChannelView,
     ThemeSettingsView,
     main_bp,
 )
@@ -64,9 +65,15 @@ def create_app(config_object='config'):
     extensions.admin.add_view(MonitoredSiteView(MonitoredSite, extensions.db.session, name="站点管理"))
     extensions.admin.add_view(HealthCheckLogView(HealthCheckLog, extensions.db.session, name="监控日志"))
     extensions.admin.add_view(MonitoringSettingsView(name="监控参数", category="系统设置", endpoint='monitor_config'))
-
-    from .routes import NotificationSettingsView
-    extensions.admin.add_view(NotificationSettingsView(name="通知设置", category="系统设置", endpoint='notification_config'))
+    extensions.admin.add_view(
+        NotificationChannelView(
+            NotificationChannel,
+            extensions.db.session,
+            name="通知渠道",
+            category="系统设置",
+            endpoint='notification_channels'
+        )
+    )
 
     extensions.admin.add_link(MenuLink(name='查看面板', url='/', icon_type='fa', icon_value='fa-desktop'))
     extensions.admin.add_view(ThemeSettingsView(name="更换主题", category="用户操作", endpoint='themes'))
@@ -83,10 +90,7 @@ def create_app(config_object='config'):
         extensions.db.create_all()
         monitoring_config = MonitoringConfig.ensure(app.config)
         monitoring_config.apply_to_config(app.config)
-        # 【新增】加载通知配置
-        from .models import NotificationConfig
-        notification_config = NotificationConfig.get_or_create()
-        notification_config.apply_to_config(app.config)
+        NotificationChannel.bootstrap_from_config(app.config)
     # 8. 配置和启动后台定时任务
     if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         if not extensions.scheduler.running:

@@ -4,9 +4,12 @@ import json
 import time
 import datetime
 import threading
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
 from flask import current_app
 from .extensions import db
-from .models import HealthCheckLog, MonitoredSite
+from .models import HealthCheckLog, MonitoredSite, NotificationChannel
 
 # --- 全局状态变量 ---
 site_statuses = {}
@@ -14,6 +17,37 @@ status_lock = threading.Lock()
 
 
 # --- 通知函数 ---
+
+SITE_EVENT_META = {
+    'down': {
+        'title': '网站宕机告警通知',
+        'status_label': '无法访问',
+        'status_color': 'warning',
+        'severity': 'warning',
+    },
+    'recovered': {
+        'title': '网站恢复通知',
+        'status_label': '已恢复正常',
+        'status_color': 'info',
+        'severity': 'info',
+    },
+    'slow': {
+        'title': '网站性能告警通知',
+        'status_label': '访问过慢',
+        'status_color': 'comment',
+        'severity': 'warning',
+    },
+    'slow_recovered': {
+        'title': '网站性能恢复通知',
+        'status_label': '访问速度恢复正常',
+        'status_color': 'info',
+        'severity': 'info',
+    },
+}
+
+CHANNEL_REQUEST_TIMEOUT = 10
+DEFAULT_NOTIFICATION_WORKERS = 4
+
 
 def render_webhook_template(template_text, context):
     """渲染 Webhook 模板"""
@@ -26,195 +60,296 @@ def render_webhook_template(template_text, context):
         return None, str(exc)
 
 
-def _load_generic_webhook_config():
-    """加载通用 Webhook 配置"""
-    config = current_app.config
-    if not config.get('GENERIC_WEBHOOK_ENABLED'):
-        return None
-    url = config.get('GENERIC_WEBHOOK_URL')
-    template_text = config.get('GENERIC_WEBHOOK_TEMPLATE')
-    if not url or not template_text:
-        return None
-    headers = {}
-    config_headers = config.get('GENERIC_WEBHOOK_HEADERS') or {}
-    if isinstance(config_headers, dict):
-        headers = {str(k): str(v) for k, v in config_headers.items()}
-    content_type = config.get('GENERIC_WEBHOOK_CONTENT_TYPE') or 'application/json'
-    if content_type and not any(k.lower() == 'content-type' for k in headers):
-        headers['Content-Type'] = content_type
-    return {
-        'url': url,
-        'template': template_text,
-        'headers': headers,
-    }
-
-
-def send_generic_webhook(event_name, payload):
-    """发送通用 Webhook 通知"""
-    config = _load_generic_webhook_config()
-    if not config:
-        return False
-    context = dict(payload or {})
-    context.setdefault('event', event_name)
-    rendered, error = render_webhook_template(config['template'], context)
-    if error:
-        current_app.logger.warning('[Webhook] 模板渲染失败: %s', error)
-        return False
-    try:
-        response = requests.post(
-            config['url'],
-            data=rendered.encode('utf-8'),
-            headers=config['headers'],
-            timeout=10
-        )
-        if 200 <= response.status_code < 300:
-            current_app.logger.info('[Webhook] 通知已发送: %s', event_name)
-            return True
-        current_app.logger.warning(
-            '[Webhook] 通知发送失败，状态码 %s，响应: %s',
-            response.status_code,
-            response.text[:200]
-        )
-    except Exception as exc:
-        current_app.logger.exception('[Webhook] 通知请求异常: %s', exc)
-    return False
-
-
-def _send_wechat_markdown(content, *, webhook_url, log_prefix, success_context):
-    """发送企业微信 Markdown 通知"""
-    if not webhook_url or "YOUR_KEY_HERE" in webhook_url:
-        print(f"{log_prefix} 企业微信 Webhook URL 未配置，跳过通知。")
-        return False
-    payload = {"msgtype": "markdown", "markdown": {"content": content}}
-    try:
-        resp = requests.post(
-            webhook_url,
-            data=json.dumps(payload),
-            headers={'Content-Type': 'application/json'},
-            timeout=10
-        )
-        ok = False
-        err_detail_msg = ""
-        if resp.status_code == 200:
+def _normalize_details(details: Optional[Iterable[Any]]) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    if not details:
+        return normalized
+    for item in details:
+        if isinstance(item, dict):
+            label = item.get('label')
+            value = item.get('value')
+        else:
             try:
-                res_json = resp.json()
-            except ValueError:
-                res_json = None
-            if isinstance(res_json, dict) and res_json.get("errcode") == 0:
-                ok = True
-            else:
-                err_detail_msg = f"非零返回: {res_json}"
+                label, value = item  # type: ignore
+            except (TypeError, ValueError):
+                continue
+        if label is None:
+            continue
+        normalized.append({'label': str(label), 'value': value})
+    return normalized
+
+
+def _detail_pairs(context: Dict[str, Any]) -> Iterable[Tuple[str, Any]]:
+    for item in context.get('details') or []:
+        if isinstance(item, dict):
+            label = item.get('label')
+            value = item.get('value')
         else:
-            err_detail_msg = f"HTTP {resp.status_code}, body: {resp.text[:200]}"
-        if ok:
-            print(f"{log_prefix} 企业微信通知发送成功: {success_context}")
-        else:
-            print(f"{log_prefix} 企业微信通知发送失败: {success_context}，原因: {err_detail_msg}")
-        return ok
-    except Exception as exc:
-        print(f"{log_prefix} 发送企业微信通知时发生异常: {exc}")
+            try:
+                label, value = item  # type: ignore
+            except (TypeError, ValueError):
+                continue
+        if label is None:
+            continue
+        yield str(label), value
+
+
+def _prepare_headers(custom_headers: Optional[Dict[str, Any]], default_content_type: Optional[str] = None) -> Dict[str, str]:
+    headers: Dict[str, str] = {}
+    if custom_headers:
+        for key, value in custom_headers.items():
+            headers[str(key)] = str(value)
+    if default_content_type and not any(k.lower() == 'content-type' for k in headers):
+        headers['Content-Type'] = default_content_type
+    return headers
+
+
+def _render_site_markdown(context: Dict[str, Any]) -> str:
+    site_name = context.get('site_name', '未知')
+    site_url = context.get('site_url', '未知')
+    status_label = context.get('status_label', '-')
+    status_color = context.get('status_color', 'comment')
+    previous_status = context.get('previous_status', '未知')
+    lines = [
+        f"## {context.get('event_title', '网站监控通知')}",
+        f"> **网站名称**: {site_name}",
+        f"> **监控地址**: {site_url}",
+        f"> **当前状态**: <font color=\"{status_color}\">{status_label}</font>",
+        f"> **上次状态**: {previous_status}",
+    ]
+    for label, value in _detail_pairs(context):
+        if value in (None, '', []):
+            continue
+        lines.append(f"> **{label}**: {value}")
+    http_code = context.get('http_code')
+    error_detail = context.get('error_detail')
+    if error_detail:
+        reason = str(error_detail).replace('"', '`').replace("'", '`')
+        if http_code and http_code >= 400:
+            reason = f"HTTP {http_code}"
+        lines.append(f"> **错误详情**: `{reason}`")
+    elif http_code and http_code >= 400:
+        lines.append(f"> **错误详情**: `HTTP {http_code}`")
+    return "\n".join(lines)
+
+
+def _render_management_markdown(context: Dict[str, Any]) -> str:
+    lines = [
+        "## 配置变更通知",
+        f"> **事件**: {context.get('event_title', '系统事件')}",
+        f"> **发生时间**: {context.get('timestamp', '-')}",
+    ]
+    operator = context.get('operator')
+    if operator:
+        lines.append(f"> **操作人**: {operator}")
+    for label, value in _detail_pairs(context):
+        if value in (None, '', []):
+            continue
+        lines.append(f"> **{label}**: {value}")
+    return "\n".join(lines)
+
+
+def _render_feishu_text(context: Dict[str, Any]) -> str:
+    lines: List[str] = [str(context.get('event_title', '监控通知'))]
+    if context.get('event_category') == 'site':
+        lines.append(f"网站名称: {context.get('site_name', '未知')}")
+        lines.append(f"监控地址: {context.get('site_url', '未知')}")
+        lines.append(f"当前状态: {context.get('status_label', '-')}")
+        lines.append(f"上次状态: {context.get('previous_status', '-')}")
+    if context.get('timestamp'):
+        lines.append(f"发生时间: {context['timestamp']}")
+    if context.get('operator'):
+        lines.append(f"操作人: {context['operator']}")
+    for label, value in _detail_pairs(context):
+        if value in (None, '', []):
+            continue
+        lines.append(f"{label}: {value}")
+    http_code = context.get('http_code')
+    if context.get('error_detail'):
+        lines.append(f"错误详情: {context['error_detail']}")
+    elif http_code and http_code >= 400:
+        lines.append(f"HTTP 状态码: {http_code}")
+    return "\n".join(str(item) for item in lines if item is not None and str(item).strip())
+
+
+def _send_channel_message(channel_cfg: Dict[str, Any], event_key: str, context: Dict[str, Any], logger) -> bool:
+    channel_name = channel_cfg.get('name') or f"Channel#{channel_cfg.get('id') or '-'}"
+    channel_type = channel_cfg.get('channel_type')
+    webhook_url = channel_cfg.get('webhook_url')
+    if not webhook_url:
+        logger.warning('[通知] 渠道 %s (%s) 未配置 Webhook 地址，跳过。', channel_name, channel_type)
         return False
+
+    headers = _prepare_headers(channel_cfg.get('custom_headers'), 'application/json')
+    response = None
+    success = False
+
+    try:
+        if channel_type == NotificationChannel.TYPE_QYWECHAT:
+            content = _render_site_markdown(context) if context.get('event_category') == 'site' else _render_management_markdown(context)
+            payload = {"msgtype": "markdown", "markdown": {"content": content}}
+            response = requests.post(
+                webhook_url,
+                json=payload,
+                headers=headers,
+                timeout=CHANNEL_REQUEST_TIMEOUT,
+            )
+            if response.status_code == 200:
+                try:
+                    body = response.json()
+                except ValueError:
+                    body = {}
+                success = isinstance(body, dict) and body.get('errcode') == 0
+        elif channel_type == NotificationChannel.TYPE_DINGTALK:
+            content = _render_site_markdown(context) if context.get('event_category') == 'site' else _render_management_markdown(context)
+            payload = {"msgtype": "markdown", "markdown": {"title": context.get('event_title', '监控通知'), "text": content}}
+            response = requests.post(
+                webhook_url,
+                json=payload,
+                headers=headers,
+                timeout=CHANNEL_REQUEST_TIMEOUT,
+            )
+            if response.status_code == 200:
+                try:
+                    body = response.json()
+                except ValueError:
+                    body = {}
+                success = isinstance(body, dict) and body.get('errcode') == 0
+        elif channel_type == NotificationChannel.TYPE_FEISHU:
+            payload = {"msg_type": "text", "content": {"text": _render_feishu_text(context)}}
+            response = requests.post(
+                webhook_url,
+                json=payload,
+                headers=headers,
+                timeout=CHANNEL_REQUEST_TIMEOUT,
+            )
+            if response.status_code == 200:
+                try:
+                    body = response.json()
+                except ValueError:
+                    body = {}
+                success = isinstance(body, dict) and body.get('code') == 0
+        elif channel_type == NotificationChannel.TYPE_CUSTOM:
+            template = channel_cfg.get('custom_template')
+            if not template:
+                logger.warning('[通知] 自定义渠道 %s 缺少消息模板，已跳过。', channel_name)
+                return False
+            rendered, error = render_webhook_template(template, context)
+            if error:
+                logger.warning('[通知] 自定义渠道 %s 模板渲染失败: %s', channel_name, error)
+                return False
+            response = requests.post(
+                webhook_url,
+                data=rendered.encode('utf-8'),
+                headers=headers,
+                timeout=CHANNEL_REQUEST_TIMEOUT,
+            )
+            success = response.status_code in range(200, 300)
+        else:
+            logger.warning('[通知] 渠道 %s 使用了未知类型 %s，已跳过。', channel_name, channel_type)
+            return False
+
+        if success:
+            logger.info('[通知] 渠道 %s (%s) 发送成功。', channel_name, channel_type)
+        else:
+            response_text = response.text[:200] if response is not None else '无响应'
+            status_code = response.status_code if response is not None else 'N/A'
+            logger.warning(
+                '[通知] 渠道 %s (%s) 发送失败，状态码=%s，响应=%s',
+                channel_name,
+                channel_type,
+                status_code,
+                response_text,
+            )
+        return success
+    except Exception as exc:
+        logger.exception('[通知] 渠道 %s (%s) 发送异常: %s', channel_name, channel_type, exc)
+        return False
+
+
+def _dispatch_notifications(event_key: str, context: Dict[str, Any]) -> None:
+    channels = [
+        channel.to_message_config()
+        for channel in NotificationChannel.query.filter_by(is_enabled=True).all()
+        if channel.should_notify(event_key)
+    ]
+    if not channels:
+        current_app.logger.debug('[通知] 没有启用的渠道匹配事件 %s。', event_key)
+        return
+
+    logger = current_app.logger
+    workers = current_app.config.get('NOTIFICATION_WORKERS', DEFAULT_NOTIFICATION_WORKERS)
+    try:
+        workers = int(workers)
+    except (TypeError, ValueError):
+        workers = DEFAULT_NOTIFICATION_WORKERS
+    workers = max(1, min(workers, len(channels)))
+
+    if workers == 1:
+        for channel_cfg in channels:
+            _send_channel_message(channel_cfg, event_key, context, logger)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [
+                executor.submit(_send_channel_message, channel_cfg, event_key, context, logger)
+                for channel_cfg in channels
+            ]
+            for future in futures:
+                try:
+                    future.result()
+                except Exception:
+                    logger.exception('[通知] 渠道发送任务执行异常')
 
 
 def send_notification(site_name, url, current_status_key, previous_status, *, error_detail=None, http_code=None,
                       context=None):
-    """
-    发送企业微信通知和通用 Webhook 的统一函数。
-    current_status_key: "down" | "recovered" | "slow" | "slow_recovered"
-    previous_status: 通知中用于显示的上次状态（字符串）
-    context: 可选的 (label, value) 元组列表，用于拼接额外字段
-    """
-    webhook_url = current_app.config.get('QYWECHAT_WEBHOOK_URL')
-
-    status_map = {
-        "down": ("网站宕机告警通知", "无法访问", "warning"),
-        "recovered": ("网站恢复通知", "已恢复正常", "info"),
-        "slow": ("网站性能告警通知", "访问过慢", "comment"),
-        "slow_recovered": ("网站性能恢复通知", "访问速度恢复正常", "info"),
-    }
-    status_meta = status_map.get(current_status_key)
-    if not status_meta:
+    meta = SITE_EVENT_META.get(current_status_key)
+    if not meta:
+        current_app.logger.warning('[通知] 未识别的事件类型: %s', current_status_key)
         return
-    title, status_text, color = status_meta
-    # 1. 发送企业微信通知
-    if webhook_url and "YOUR_KEY_HERE" not in webhook_url:
-        content = (
-            f"## {title}\n"
-            f"> **网站名称**: {site_name}\n"
-            f"> **监控地址**: {url}\n"
-            f"> **当前状态**: <font color=\"{color}\">{status_text}</font>\n"
-            f"> **上次状态**: {previous_status}"
-        )
-        if context:
-            for label, value in context:
-                if value is None or value == "":
-                    continue
-                content += f"\n> **{label}**: {value}"
-        if error_detail:
-            reason = str(error_detail).replace("'", "`").replace('"', '`')
-            if http_code and http_code >= 400:
-                reason = f"HTTP {http_code}"
-            content += f"\n> **错误详情**: `{reason}`"
-        elif http_code and http_code >= 400:
-            content += f"\n> **错误详情**: `HTTP {http_code}`"
-        print(f"[通知] 准备发送企业微信通知: {site_name} - {status_text} -> 上次状态: {previous_status} | URL: {url}")
-        _send_wechat_markdown(
-            content,
-            webhook_url=webhook_url,
-            log_prefix='[通知]',
-            success_context=f"{site_name} 状态变更为 {status_text}"
-        )
-    # 2. 发送通用 Webhook 通知
-    webhook_payload = {
-        'event_title': title,
+
+    timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    detail_entries = _normalize_details(context)
+    payload = {
+        'event': current_status_key,
+        'event_category': 'site',
+        'event_title': meta['title'],
         'site_name': site_name,
         'site_url': url,
         'status_key': current_status_key,
-        'status_label': status_text,
+        'status_label': meta['status_label'],
+        'status_color': meta['status_color'],
+        'status_text': meta['status_label'],
         'previous_status': previous_status,
-        'severity': 'warning' if current_status_key in ['down', 'slow'] else 'info',
-        'timestamp': datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+        'severity': meta['severity'],
+        'timestamp': timestamp,
         'http_code': http_code,
         'error_detail': error_detail,
-        'details': [{'label': str(label), 'value': value} for label, value in (context or [])]
+        'details': detail_entries,
+        'extra': detail_entries,
+        'site': {'name': site_name, 'url': url},
+        'status': {
+            'key': current_status_key,
+            'label': meta['status_label'],
+            'previous': previous_status,
+        },
     }
-    send_generic_webhook('site_status_change', webhook_payload)
+    _dispatch_notifications(current_status_key, payload)
 
 
 def send_management_notification(event_title, *, operator=None, details=None):
-    """发送后台配置变更的企业微信通知和通用 Webhook。"""
-    webhook_url = current_app.config.get('QYWECHAT_WEBHOOK_URL')
-    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-    # 1. 企业微信通知
-    if webhook_url and "YOUR_KEY_HERE" not in webhook_url:
-        content = (
-            f"## 配置变更通知\n"
-            f"> **事件**: {event_title}\n"
-            f"> **发生时间**: {timestamp}"
-        )
-        if operator:
-            content += f"\n> **操作人**: {operator}"
-        if details:
-            for label, value in details:
-                if value is None or value == "":
-                    continue
-                content += f"\n> **{label}**: {value}"
-        print(f"[配置通知] 准备发送企业微信通知: {event_title}")
-        _send_wechat_markdown(
-            content,
-            webhook_url=webhook_url,
-            log_prefix='[配置通知]',
-            success_context=event_title
-        )
-    # 2. 通用 Webhook 通知
-    webhook_payload = {
+    timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    detail_entries = _normalize_details(details)
+    payload = {
+        'event': 'management',
+        'event_category': 'management',
         'event_title': event_title,
         'operator': operator or '系统',
         'timestamp': timestamp,
-        'details': [{'label': str(label), 'value': value} for label, value in (details or [])]
+        'details': detail_entries,
+        'extra': detail_entries,
     }
-    send_generic_webhook('management_config_change', webhook_payload)
+    _dispatch_notifications('management', payload)
 
 
 # --- 内部工具函数 ---
