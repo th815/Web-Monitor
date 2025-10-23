@@ -11,6 +11,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const responseTimeChart = echarts.init(responseTimeChartContainer);
     const statusDistributionChartContainer = document.getElementById('status-distribution-chart');
     const statusDistributionChart = statusDistributionChartContainer ? echarts.init(statusDistributionChartContainer) : null;
+    const alertHistoryTable = document.getElementById('alert-history-table');
+    const alertHistoryBody = document.getElementById('alert-history-body');
+    const alertHistoryEmptyState = document.getElementById('alert-history-empty');
+    const alertHistoryFootnote = document.getElementById('alert-history-footnote');
+    const defaultAlertHistoryMessage = alertHistoryEmptyState
+        ? (alertHistoryEmptyState.dataset.defaultText || alertHistoryEmptyState.textContent || '选定范围内暂无告警')
+        : '选定范围内暂无告警';
+    const ALERT_HISTORY_LIMIT = 30;
 
     const summaryElements = {
         siteCount: document.getElementById('summary-site-count'),
@@ -50,6 +58,29 @@ document.addEventListener('DOMContentLoaded', () => {
         if (minutes) parts.push(`${minutes}分钟`);
         if (seconds || parts.length === 0) parts.push(`${seconds}秒`);
         return parts.join('');
+    };
+
+    const formatDateTime = (timestamp) => {
+        if (timestamp === null || timestamp === undefined) {
+            return '--';
+        }
+        const date = new Date(timestamp);
+        if (Number.isNaN(date.getTime())) {
+            return '--';
+        }
+        return date.toLocaleString('zh-CN', { hour12: false });
+    };
+
+    const escapeHtml = (value) => {
+        if (value === null || value === undefined) {
+            return '';
+        }
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     };
 
     const setChartEmptyState = (chart, domElement, message) => {
@@ -400,6 +431,101 @@ document.addEventListener('DOMContentLoaded', () => {
     }, true);
 }
 
+    function renderAlertHistory(data, options = {}) {
+        if (!alertHistoryBody || !alertHistoryEmptyState || !alertHistoryTable) {
+            return;
+        }
+        const { emptyMessage = defaultAlertHistoryMessage } = options;
+        const effectiveEmptyMessage = emptyMessage || defaultAlertHistoryMessage;
+        const incidents = [];
+
+        if (data && typeof data === 'object') {
+            Object.entries(data).forEach(([siteName, siteData]) => {
+                (siteData.incidents || []).forEach(incident => {
+                    incidents.push({
+                        site_name: siteName,
+                        ...incident
+                    });
+                });
+            });
+        }
+
+        incidents.sort((a, b) => {
+            const aValue = a.start_ts || 0;
+            const bValue = b.start_ts || 0;
+            return bValue - aValue;
+        });
+
+        if (incidents.length === 0) {
+            alertHistoryBody.innerHTML = '';
+            alertHistoryTable.style.display = 'none';
+            alertHistoryEmptyState.textContent = effectiveEmptyMessage;
+            alertHistoryEmptyState.style.display = 'block';
+            if (alertHistoryFootnote) {
+                alertHistoryFootnote.style.display = 'none';
+            }
+            return;
+        }
+
+        alertHistoryEmptyState.textContent = effectiveEmptyMessage;
+        alertHistoryEmptyState.style.display = 'none';
+        alertHistoryTable.style.display = '';
+
+        const limitedIncidents = incidents.slice(0, ALERT_HISTORY_LIMIT);
+        const rowsHtml = limitedIncidents.map(incident => {
+            const badgeClass = incident.status_key === 'down'
+                ? 'alert-badge--down'
+                : incident.status_key === 'slow'
+                    ? 'alert-badge--slow'
+                    : '';
+            const typeLabel = incident.status_label || incident.status_key || '告警';
+            const startText = formatDateTime(incident.start_ts);
+            const endText = incident.resolved ? formatDateTime(incident.end_ts) : null;
+            const durationText = formatDuration(incident.duration_ms);
+            const reasonParts = [];
+            if (incident.reason) {
+                reasonParts.push(incident.reason);
+            }
+            const httpCode = Number(incident.http_status_code);
+            if (Number.isFinite(httpCode) && httpCode >= 400) {
+                const reasonText = incident.reason ? String(incident.reason) : '';
+                if (!reasonText.includes(String(httpCode))) {
+                    reasonParts.push(`HTTP ${httpCode}`);
+                }
+            }
+            const detailText = reasonParts.length ? reasonParts.join(' / ') : '—';
+            const endCellContent = incident.resolved
+                ? escapeHtml(endText)
+                : '<span class="alert-status-pending">未恢复</span>';
+            return `<tr>
+                <td>${escapeHtml(incident.site_name)}</td>
+                <td><span class="alert-badge ${badgeClass}">${escapeHtml(typeLabel)}</span></td>
+                <td>${escapeHtml(startText)}</td>
+                <td>${endCellContent}</td>
+                <td>${escapeHtml(durationText)}</td>
+                <td>${escapeHtml(detailText)}</td>
+            </tr>`;
+        }).join('');
+
+        alertHistoryBody.innerHTML = rowsHtml;
+        if (alertHistoryFootnote) {
+            alertHistoryFootnote.style.display = incidents.length > ALERT_HISTORY_LIMIT ? 'block' : 'none';
+        }
+    }
+
+    function renderAlertHistoryError(message) {
+        if (!alertHistoryBody || !alertHistoryEmptyState || !alertHistoryTable) {
+            return;
+        }
+        alertHistoryBody.innerHTML = '';
+        alertHistoryTable.style.display = 'none';
+        alertHistoryEmptyState.textContent = message || '数据加载失败';
+        alertHistoryEmptyState.style.display = 'block';
+        if (alertHistoryFootnote) {
+            alertHistoryFootnote.style.display = 'none';
+        }
+    }
+
     function updateSummaryCards(data, selectedSites) {
         if (!summaryElements.siteCount) {
             return;
@@ -457,6 +583,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (statusDistributionChart && statusDistributionChartContainer) {
                 setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '请选择至少一个网站以查看状态分布');
             }
+            renderAlertHistory(null, { emptyMessage: '请选择站点以查看告警' });
             return;
         }
         setChartEmptyState(timelineChart, timelineChartContainer, null);
@@ -477,6 +604,7 @@ document.addEventListener('DOMContentLoaded', () => {
             renderUptimeHistory(data);
             renderComparisonCharts(data);
             renderStatusDistribution(data);
+            renderAlertHistory(data);
         } catch (error) {
             console.error(error);
             setChartEmptyState(timelineChart, timelineChartContainer, '数据加载失败，请稍后重试');
@@ -485,6 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (statusDistributionChart) {
                 setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, '数据加载失败');
             }
+            renderAlertHistoryError('数据加载失败');
         } finally {
             timelineChart.hideLoading();
             if (statusDistributionChart) {
