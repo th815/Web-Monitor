@@ -125,6 +125,41 @@ A lightweight, beautiful, and powerful self-hosted website health monitoring das
 
     **强烈建议首次登录后立即在后台修改默认密码！**
 
+4.  **升级现有数据库 (Updating Existing Database)**
+    
+    如果你已经有一个运行中的实例，在拉取最新代码后，可能需要应用新的数据库迁移。
+    
+    如果遇到类似 `no such column: monitoring_config.alert_suppression_seconds` 的错误，按以下步骤操作：
+    
+    **方法一：使用辅助脚本（推荐）**
+    ```bash
+    python add_alert_suppression_column.py
+    flask db upgrade
+    ```
+    
+    **方法二：手动更新**
+    ```bash
+    flask db upgrade
+    ```
+    如果 `flask db upgrade` 失败（因为应用启动时会查询数据库），可以先手动添加缺失的列，然后再运行迁移：
+    ```bash
+    python3 << 'EOF'
+    import sqlite3
+    conn = sqlite3.connect('instance/monitoring_data.db')
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(monitoring_config)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if 'alert_suppression_seconds' not in columns:
+        cursor.execute('ALTER TABLE monitoring_config ADD COLUMN alert_suppression_seconds INTEGER NOT NULL DEFAULT 600')
+        conn.commit()
+        print("✓ Column added")
+    conn.close()
+    EOF
+    flask db upgrade
+    ```
+    
+    更多详细信息，请参阅 [`migrations/MIGRATION_GUIDE.md`](migrations/MIGRATION_GUIDE.md)。
+
 ### 5. 运行应用 (Running the Application)
 
 #### 开发环境
