@@ -102,6 +102,24 @@
                 <h2>日志告警历史</h2>
                 <span class="alerts-subtitle">展示所选站点在当前时间范围内的宕机与性能告警</span>
             </div>
+            <div class="alerts-toolbar">
+                <label class="alerts-filter">
+                    <span class="alerts-filter-label">告警状态</span>
+                    <select id="alert-status-filter" class="alerts-filter-select">
+                        <option value="unresolved" selected>未恢复</option>
+                        <option value="all">全部</option>
+                        <option value="resolved">已恢复</option>
+                    </select>
+                </label>
+                <label class="alerts-filter">
+                    <span class="alerts-filter-label">告警类型</span>
+                    <select id="alert-type-filter" class="alerts-filter-select">
+                        <option value="all" selected>全部类型</option>
+                        <option value="down">宕机</option>
+                        <option value="slow">访问过慢</option>
+                    </select>
+                </label>
+            </div>
             <div class="alerts-table-wrapper">
                 <table class="alerts-table" id="alert-history-table">
                     <thead>

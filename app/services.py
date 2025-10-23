@@ -427,6 +427,12 @@ def _core_check_logic():
     slow_window_size = current_app.config.get('SLOW_RESPONSE_WINDOW_SIZE', 5)
     slow_window_threshold = current_app.config.get('SLOW_RESPONSE_WINDOW_THRESHOLD', 3)
     slow_recovery_consecutive = current_app.config.get('SLOW_RESPONSE_RECOVERY_THRESHOLD', recovery_consecutive)
+    raw_suppression = current_app.config.get('ALERT_SUPPRESSION_SECONDS', 600)
+    try:
+        alert_suppression_seconds = int(raw_suppression)
+    except (TypeError, ValueError):
+        alert_suppression_seconds = 0
+    alert_suppression_seconds = max(0, alert_suppression_seconds)
 
     print(f"开始执行健康检查，共 {len(sites_to_monitor)} 个网站...")
 
@@ -471,6 +477,8 @@ def _core_check_logic():
                 error_detail = None
 
         now = datetime.datetime.now()
+        now_utc = datetime.datetime.utcnow()
+        now_epoch = now_utc.timestamp()
         now_str = now.strftime('%Y-%m-%d %H:%M:%S')
         rounded_response_time = round(response_time, 2) if response_time is not None else None
         response_time_display = f"{rounded_response_time:.2f}秒" if rounded_response_time is not None else None
@@ -488,6 +496,60 @@ def _core_check_logic():
             prev_total_checks = prev.get("total_checks", 0)
             prev_down_since_dt = _parse_datetime_safe(prev.get("down_since"))
             prev_slow_since_dt = _parse_datetime_safe(prev.get("slow_since"))
+            prev_notifications = prev.get("last_notifications") or {}
+            last_notifications = {}
+            if isinstance(prev_notifications, dict):
+                for event_key, raw_value in prev_notifications.items():
+                    if isinstance(raw_value, (int, float)):
+                        last_notifications[event_key] = float(raw_value)
+                        continue
+                    if isinstance(raw_value, datetime.datetime):
+                        last_notifications[event_key] = raw_value.timestamp()
+                        continue
+                    try:
+                        parsed = datetime.datetime.fromisoformat(str(raw_value))
+                    except (TypeError, ValueError):
+                        continue
+                    else:
+                        last_notifications[event_key] = parsed.timestamp()
+
+            def _should_send(event_key: str) -> bool:
+                if alert_suppression_seconds <= 0:
+                    return True
+                last_ts = last_notifications.get(event_key)
+                if last_ts is None:
+                    return True
+                return (now_epoch - last_ts) >= alert_suppression_seconds
+
+            def _mark_sent(event_key: str) -> None:
+                last_notifications[event_key] = now_epoch
+                suppression_log_key = f"{event_key}__suppression_log"
+                if suppression_log_key in last_notifications:
+                    del last_notifications[suppression_log_key]
+
+            def _log_suppressed(event_key: str) -> None:
+                if alert_suppression_seconds <= 0:
+                    return
+                last_ts = last_notifications.get(event_key)
+                if last_ts is None:
+                    return
+                suppression_log_key = f"{event_key}__suppression_log"
+                last_logged = last_notifications.get(suppression_log_key)
+                throttle_window = max(30, min(alert_suppression_seconds, 300))
+                if last_logged is not None and (now_epoch - last_logged) < throttle_window:
+                    return
+                elapsed = max(0, now_epoch - last_ts)
+                remaining = max(0, alert_suppression_seconds - elapsed)
+                event_meta = SITE_EVENT_META.get(event_key, {})
+                label = event_meta.get('status_label') or event_meta.get('title') or event_key
+                current_app.logger.info(
+                    '[告警抑制] 站点 %s 的 %s 告警在 %.0f 秒前已发送，距离下一次通知还需约 %.0f 秒。',
+                    site_name,
+                    label,
+                    elapsed,
+                    remaining,
+                )
+                last_notifications[suppression_log_key] = now_epoch
 
             total_checks = prev_total_checks + 1
             is_down = current_status == '无法访问'
@@ -543,7 +605,8 @@ def _core_check_logic():
                 "last_checked": now_str,
                 "down_since": down_since_str,
                 "slow_since": slow_since_str,
-                "total_checks": total_checks
+                "total_checks": total_checks,
+                "last_notifications": last_notifications,
             }
 
             down_duration_str = _format_duration(now - down_since_dt) if down_since_dt else None
@@ -551,29 +614,33 @@ def _core_check_logic():
 
             if is_down and not notification_sent:
                 if failure_count >= fail_consecutive or fails_in_window >= window_threshold:
-                    print(
-                        f"[告警触发] 宕机: {site_name} 当前状态={current_status}, 上次状态={prev_status}, "
-                        f"连续失败={failure_count}, 窗口失败={failure_window_display}, HTTP={http_status_code or 'N/A'}, "
-                        f"错误={error_detail or 'N/A'}, 故障开始={down_since_str or '刚刚'}"
-                    )
-                    context = [
-                        ("检测时间", now_str),
-                        ("故障开始时间", down_since_str or now_str),
-                        ("已持续", down_duration_str or "0秒"),
-                        ("连续失败次数", failure_count),
-                        ("窗口失败次数", failure_window_display),
-                        ("累计检查次数", total_checks),
-                    ]
-                    send_notification(
-                        site_name,
-                        url,
-                        "down",
-                        prev_status,
-                        error_detail=error_detail,
-                        http_code=http_status_code,
-                        context=context
-                    )
-                    site_statuses[site_name]["notification_sent"] = True
+                    if not _should_send('down'):
+                        _log_suppressed('down')
+                    else:
+                        print(
+                            f"[告警触发] 宕机: {site_name} 当前状态={current_status}, 上次状态={prev_status}, "
+                            f"连续失败={failure_count}, 窗口失败={failure_window_display}, HTTP={http_status_code or 'N/A'}, "
+                            f"错误={error_detail or 'N/A'}, 故障开始={down_since_str or '刚刚'}"
+                        )
+                        context = [
+                            ("检测时间", now_str),
+                            ("故障开始时间", down_since_str or now_str),
+                            ("已持续", down_duration_str or "0秒"),
+                            ("连续失败次数", failure_count),
+                            ("窗口失败次数", failure_window_display),
+                            ("累计检查次数", total_checks),
+                        ]
+                        send_notification(
+                            site_name,
+                            url,
+                            "down",
+                            prev_status,
+                            error_detail=error_detail,
+                            http_code=http_status_code,
+                            context=context
+                        )
+                        _mark_sent('down')
+                        site_statuses[site_name]["notification_sent"] = True
 
             if site_statuses[site_name]["notification_sent"] and current_status == '正常':
                 if success_count >= recovery_consecutive:
@@ -599,29 +666,33 @@ def _core_check_logic():
 
             if is_slow and not is_down and not site_statuses[site_name]["slow_notification_sent"]:
                 if slow_count >= slow_consecutive or slows_in_window >= slow_window_threshold:
-                    print(
-                        f"[告警触发] 慢响应: {site_name} 响应时间={response_time_display or 'N/A'}, "
-                        f"连续慢响应={slow_count}, 窗口慢响应={slow_window_display}"
-                    )
-                    slow_context = [
-                        ("检测时间", now_str),
-                        ("访问减速开始时间", slow_since_str or now_str),
-                        ("已持续", slow_duration_str or "0秒"),
-                        ("连续慢响应次数", slow_count),
-                        ("窗口慢响应次数", slow_window_display),
-                        ("最近一次响应时间", response_time_display),
-                        ("累计检查次数", total_checks),
-                    ]
-                    send_notification(
-                        site_name,
-                        url,
-                        "slow",
-                        prev_status,
-                        error_detail=error_detail,
-                        http_code=http_status_code,
-                        context=slow_context
-                    )
-                    site_statuses[site_name]["slow_notification_sent"] = True
+                    if not _should_send('slow'):
+                        _log_suppressed('slow')
+                    else:
+                        print(
+                            f"[告警触发] 慢响应: {site_name} 响应时间={response_time_display or 'N/A'}, "
+                            f"连续慢响应={slow_count}, 窗口慢响应={slow_window_display}"
+                        )
+                        slow_context = [
+                            ("检测时间", now_str),
+                            ("访问减速开始时间", slow_since_str or now_str),
+                            ("已持续", slow_duration_str or "0秒"),
+                            ("连续慢响应次数", slow_count),
+                            ("窗口慢响应次数", slow_window_display),
+                            ("最近一次响应时间", response_time_display),
+                            ("累计检查次数", total_checks),
+                        ]
+                        send_notification(
+                            site_name,
+                            url,
+                            "slow",
+                            prev_status,
+                            error_detail=error_detail,
+                            http_code=http_status_code,
+                            context=slow_context
+                        )
+                        _mark_sent('slow')
+                        site_statuses[site_name]["slow_notification_sent"] = True
 
             if site_statuses[site_name]["slow_notification_sent"] and current_status == '正常':
                 if success_count >= slow_recovery_consecutive:
