@@ -14,11 +14,77 @@ status_lock = threading.Lock()
 
 
 # --- 通知函数 ---
+
+def render_webhook_template(template_text, context):
+    """渲染 Webhook 模板"""
+    if not template_text:
+        return None, '模板内容为空'
+    try:
+        template = current_app.jinja_env.from_string(template_text)
+        return template.render(**context), None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def _load_generic_webhook_config():
+    """加载通用 Webhook 配置"""
+    config = current_app.config
+    if not config.get('GENERIC_WEBHOOK_ENABLED'):
+        return None
+    url = config.get('GENERIC_WEBHOOK_URL')
+    template_text = config.get('GENERIC_WEBHOOK_TEMPLATE')
+    if not url or not template_text:
+        return None
+    headers = {}
+    config_headers = config.get('GENERIC_WEBHOOK_HEADERS') or {}
+    if isinstance(config_headers, dict):
+        headers = {str(k): str(v) for k, v in config_headers.items()}
+    content_type = config.get('GENERIC_WEBHOOK_CONTENT_TYPE') or 'application/json'
+    if content_type and not any(k.lower() == 'content-type' for k in headers):
+        headers['Content-Type'] = content_type
+    return {
+        'url': url,
+        'template': template_text,
+        'headers': headers,
+    }
+
+
+def send_generic_webhook(event_name, payload):
+    """发送通用 Webhook 通知"""
+    config = _load_generic_webhook_config()
+    if not config:
+        return False
+    context = dict(payload or {})
+    context.setdefault('event', event_name)
+    rendered, error = render_webhook_template(config['template'], context)
+    if error:
+        current_app.logger.warning('[Webhook] 模板渲染失败: %s', error)
+        return False
+    try:
+        response = requests.post(
+            config['url'],
+            data=rendered.encode('utf-8'),
+            headers=config['headers'],
+            timeout=10
+        )
+        if 200 <= response.status_code < 300:
+            current_app.logger.info('[Webhook] 通知已发送: %s', event_name)
+            return True
+        current_app.logger.warning(
+            '[Webhook] 通知发送失败，状态码 %s，响应: %s',
+            response.status_code,
+            response.text[:200]
+        )
+    except Exception as exc:
+        current_app.logger.exception('[Webhook] 通知请求异常: %s', exc)
+    return False
+
+
 def _send_wechat_markdown(content, *, webhook_url, log_prefix, success_context):
+    """发送企业微信 Markdown 通知"""
     if not webhook_url or "YOUR_KEY_HERE" in webhook_url:
         print(f"{log_prefix} 企业微信 Webhook URL 未配置，跳过通知。")
         return False
-
     payload = {"msgtype": "markdown", "markdown": {"content": content}}
     try:
         resp = requests.post(
@@ -49,17 +115,16 @@ def _send_wechat_markdown(content, *, webhook_url, log_prefix, success_context):
         print(f"{log_prefix} 发送企业微信通知时发生异常: {exc}")
         return False
 
-def send_notification(site_name, url, current_status_key, previous_status, *, error_detail=None, http_code=None, context=None):
+
+def send_notification(site_name, url, current_status_key, previous_status, *, error_detail=None, http_code=None,
+                      context=None):
     """
-    发送企业微信通知的统一函数。
+    发送企业微信通知和通用 Webhook 的统一函数。
     current_status_key: "down" | "recovered" | "slow" | "slow_recovered"
     previous_status: 通知中用于显示的上次状态（字符串）
     context: 可选的 (label, value) 元组列表，用于拼接额外字段
     """
     webhook_url = current_app.config.get('QYWECHAT_WEBHOOK_URL')
-    if not webhook_url or "YOUR_KEY_HERE" in webhook_url:
-        print("企业微信 Webhook URL 未配置，跳过通知。")
-        return
 
     status_map = {
         "down": ("网站宕机告警通知", "无法访问", "warning"),
@@ -70,68 +135,86 @@ def send_notification(site_name, url, current_status_key, previous_status, *, er
     status_meta = status_map.get(current_status_key)
     if not status_meta:
         return
-
     title, status_text, color = status_meta
-
-    content = (
-        f"## {title}\n"
-        f"> **网站名称**: {site_name}\n"
-        f"> **监控地址**: {url}\n"
-        f"> **当前状态**: <font color=\"{color}\">{status_text}</font>\n"
-        f"> **上次状态**: {previous_status}"
-    )
-
-    if context:
-        for label, value in context:
-            if value is None or value == "":
-                continue
-            content += f"\n> **{label}**: {value}"
-
-    if error_detail:
-        reason = str(error_detail).replace("'", "`").replace('"', '`')
-        if http_code and http_code >= 400:
-            reason = f"HTTP {http_code}"
-        content += f"\n> **错误详情**: `{reason}`"
-    elif http_code and http_code >= 400:
-        content += f"\n> **错误详情**: `HTTP {http_code}`"
-
-    print(f"[通知] 准备发送企业微信通知: {site_name} - {status_text} -> 上次状态: {previous_status} | URL: {url}")
-    _send_wechat_markdown(
-        content,
-        webhook_url=webhook_url,
-        log_prefix='[通知]',
-        success_context=f"{site_name} 状态变更为 {status_text}"
-    )
+    # 1. 发送企业微信通知
+    if webhook_url and "YOUR_KEY_HERE" not in webhook_url:
+        content = (
+            f"## {title}\n"
+            f"> **网站名称**: {site_name}\n"
+            f"> **监控地址**: {url}\n"
+            f"> **当前状态**: <font color=\"{color}\">{status_text}</font>\n"
+            f"> **上次状态**: {previous_status}"
+        )
+        if context:
+            for label, value in context:
+                if value is None or value == "":
+                    continue
+                content += f"\n> **{label}**: {value}"
+        if error_detail:
+            reason = str(error_detail).replace("'", "`").replace('"', '`')
+            if http_code and http_code >= 400:
+                reason = f"HTTP {http_code}"
+            content += f"\n> **错误详情**: `{reason}`"
+        elif http_code and http_code >= 400:
+            content += f"\n> **错误详情**: `HTTP {http_code}`"
+        print(f"[通知] 准备发送企业微信通知: {site_name} - {status_text} -> 上次状态: {previous_status} | URL: {url}")
+        _send_wechat_markdown(
+            content,
+            webhook_url=webhook_url,
+            log_prefix='[通知]',
+            success_context=f"{site_name} 状态变更为 {status_text}"
+        )
+    # 2. 发送通用 Webhook 通知
+    webhook_payload = {
+        'event_title': title,
+        'site_name': site_name,
+        'site_url': url,
+        'status_key': current_status_key,
+        'status_label': status_text,
+        'previous_status': previous_status,
+        'severity': 'warning' if current_status_key in ['down', 'slow'] else 'info',
+        'timestamp': datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+        'http_code': http_code,
+        'error_detail': error_detail,
+        'details': [{'label': str(label), 'value': value} for label, value in (context or [])]
+    }
+    send_generic_webhook('site_status_change', webhook_payload)
 
 
 def send_management_notification(event_title, *, operator=None, details=None):
-    """发送后台配置变更的企业微信通知。"""
+    """发送后台配置变更的企业微信通知和通用 Webhook。"""
     webhook_url = current_app.config.get('QYWECHAT_WEBHOOK_URL')
-    if not webhook_url or "YOUR_KEY_HERE" in webhook_url:
-        print("[配置通知] 企业微信 Webhook URL 未配置，跳过通知。")
-        return
-
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    content = (
-        f"## 配置变更通知\n"
-        f"> **事件**: {event_title}\n"
-        f"> **发生时间**: {timestamp}"
-    )
-    if operator:
-        content += f"\n> **操作人**: {operator}"
-    if details:
-        for label, value in details:
-            if value is None or value == "":
-                continue
-            content += f"\n> **{label}**: {value}"
 
-    print(f"[配置通知] 准备发送企业微信通知: {event_title}")
-    _send_wechat_markdown(
-        content,
-        webhook_url=webhook_url,
-        log_prefix='[配置通知]',
-        success_context=event_title
-    )
+    # 1. 企业微信通知
+    if webhook_url and "YOUR_KEY_HERE" not in webhook_url:
+        content = (
+            f"## 配置变更通知\n"
+            f"> **事件**: {event_title}\n"
+            f"> **发生时间**: {timestamp}"
+        )
+        if operator:
+            content += f"\n> **操作人**: {operator}"
+        if details:
+            for label, value in details:
+                if value is None or value == "":
+                    continue
+                content += f"\n> **{label}**: {value}"
+        print(f"[配置通知] 准备发送企业微信通知: {event_title}")
+        _send_wechat_markdown(
+            content,
+            webhook_url=webhook_url,
+            log_prefix='[配置通知]',
+            success_context=event_title
+        )
+    # 2. 通用 Webhook 通知
+    webhook_payload = {
+        'event_title': event_title,
+        'operator': operator or '系统',
+        'timestamp': timestamp,
+        'details': [{'label': str(label), 'value': value} for label, value in (details or [])]
+    }
+    send_generic_webhook('management_config_change', webhook_payload)
 
 
 # --- 内部工具函数 ---

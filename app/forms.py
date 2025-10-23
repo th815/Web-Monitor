@@ -1,4 +1,7 @@
+## web-monitor/app/forms.py
 from flask_wtf import FlaskForm
+import json
+
 from wtforms import (
     BooleanField,
     FloatField,
@@ -6,8 +9,9 @@ from wtforms import (
     PasswordField,
     StringField,
     SubmitField,
+    TextAreaField,
 )
-from wtforms.validators import DataRequired, EqualTo, Length, NumberRange, URL
+from wtforms.validators import DataRequired, EqualTo, Length, NumberRange, Optional, URL, ValidationError
 
 
 class LoginForm(FlaskForm):
@@ -90,6 +94,56 @@ class MonitoringSettingsForm(FlaskForm):
         '快速重试间隔 (秒)', validators=[DataRequired(), NumberRange(min=0, max=60)]
     )
     data_retention_days = IntegerField(
-        '数据保留天数', validators=[DataRequired(), NumberRange(min=1, max=365)]
+        '数据保留天数', validators=[DataRequired(), NumberRange(min=1, max=30)]
     )
     submit = SubmitField('保存设置')
+
+
+class NotificationSettingsForm(FlaskForm):
+    webhook_enabled = BooleanField('启用 Webhook 通知')
+    webhook_url = StringField(
+        'Webhook 地址',
+        validators=[Optional(), URL(message='请输入有效的 URL 地址')]
+    )
+    webhook_content_type = StringField(
+        '内容类型',
+        validators=[Optional(), Length(max=120)],
+        default='application/json'
+    )
+    webhook_headers = TextAreaField(
+        '自定义请求头 (JSON)',
+        validators=[Optional()],
+        render_kw={'placeholder': '{"Authorization": "Bearer your-token"}'}
+    )
+    webhook_template = TextAreaField(
+        '消息模板',
+        validators=[Optional(), Length(max=8000)],
+        render_kw={'rows': 15}
+    )
+    submit = SubmitField('保存设置')
+    test_webhook = SubmitField('发送测试通知')
+
+    def validate(self, extra_validators=None):
+        if not super().validate(extra_validators=extra_validators):
+            return False
+
+        if self.webhook_enabled.data:
+            if not self.webhook_url.data:
+                self.webhook_url.errors.append('启用 Webhook 时必须填写地址。')
+                return False
+            if not self.webhook_template.data:
+                self.webhook_template.errors.append('启用 Webhook 时必须提供模板。')
+                return False
+
+        return True
+
+    def validate_webhook_headers(self, field):
+        if not field.data or not field.data.strip():
+            return
+        try:
+            value = json.loads(field.data)
+        except (TypeError, json.JSONDecodeError):
+            raise ValidationError('请求头需要是有效的 JSON 对象，例如 {"Authorization": "Bearer xxx"}')
+        if not isinstance(value, dict):
+            raise ValidationError('请求头必须是一个 JSON 对象，例如 {"Authorization": "Bearer xxx"}')
+

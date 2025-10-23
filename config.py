@@ -13,6 +13,14 @@ FLASK_ADMIN_SWATCH = 'lumen'
 SECRET_KEY = 'a-super-secret-key-that-you-should-change'
 # QYWECHAT_WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY_HERE" # 记得替换成你的Key
 
+
+# 通用 Webhook 配置（默认禁用，通过后台配置）
+GENERIC_WEBHOOK_ENABLED = False
+GENERIC_WEBHOOK_URL = None
+GENERIC_WEBHOOK_CONTENT_TYPE = 'application/json'
+GENERIC_WEBHOOK_HEADERS = {}
+GENERIC_WEBHOOK_TEMPLATE = None
+# 监控网站列表（默认示例，可通过后台配置）
 # SITES_TO_MONITOR = [
 #     {"name": "谷歌", "url": "https://www.google.com"},
 #     {"name": "GitHub", "url": "https://www.github.com"},

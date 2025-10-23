@@ -21,7 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const initialStatuses = window.INITIAL_STATUSES;
-    const dataRetentionDays = window.DATA_RETENTION_DAYS;
+    const dataRetentionDays = 30; // 固定为30天
     let currentParams = {};
     let rangePicker;
 
@@ -31,7 +31,6 @@ document.addEventListener('DOMContentLoaded', () => {
         2: '#fac858',
         3: '#ee6666'
     };
-
 
     const formatDuration = (ms) => {
         if (!ms || ms <= 0) {
@@ -157,9 +156,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     handleIcon: 'path://M10.7,11.9H9.3c-4.9,0.3-8.8,4.4-8.8,9.4c0,5,3.9,9.1,8.8,9.4h1.3c4.9-0.3,8.8-4.4,8.8-9.4C19.5,16.3,15.6,12.2,10.7,11.9z M13.3,24.4H6.7V23h6.6V24.4z M13.3,22H6.7v-1.4h6.6V22z',
                     handleSize: 20,
                     handleStyle: { color: '#fff', shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.3)' },
-                    zoomOnMouseWheel: false,
+                    zoomLock: false,
                     moveOnMouseWheel: false,
-                    moveOnMouseMove: false
+                    zoomOnMouseWheel: false
                 }
             ],
             grid: { top: 25, left: 120, right: 30, bottom: 90 },
@@ -262,28 +261,42 @@ document.addEventListener('DOMContentLoaded', () => {
             setChartEmptyState(responseTimeChart, responseTimeChartContainer, '暂无响应时间数据');
         } else {
             setChartEmptyState(responseTimeChart, responseTimeChartContainer, null);
-            const rotateLabels = sortedTimestamps.length > 10 ? -35 : 0;
+
             responseTimeChart.setOption({
                 tooltip: { trigger: 'axis' },
                 legend: { data: responseTimeLegends, top: 10, type: 'scroll' },
-                grid: { top: 70, left: 60, right: 50, bottom: 100 },
+                grid: { top: 70, left: 60, right: 50, bottom: 120 },
                 xAxis: {
                     type: 'category',
                     boundaryGap: false,
                     data: sortedTimestamps,
-                    axisLabel: { rotate: rotateLabels, hideOverlap: true }
+                    axisLabel: {
+                        rotate: 0,
+                        hideOverlap: true,
+                        interval: 'auto',
+                        formatter: function(value) {
+                            // 智能格式化时间标签
+                            return value.replace(/:\d{2}$/, ''); // 移除秒数
+                        }
+                    }
                 },
                 yAxis: { type: 'value', name: '响应时间 (秒)', nameGap: 30 },
                 dataZoom: [
                     {
                         type: 'slider',
-                        bottom: 16,
-                        height: 24,
-                        zoomOnMouseWheel: false,
+                        bottom: 20,
+                        height: 20,
+                        start: 0,
+                        end: 100,
+                        zoomLock: false,
                         moveOnMouseWheel: false,
-                        moveOnMouseMove: false
+                        zoomOnMouseWheel: false,
+                        brushSelect: false
                     },
-                    { type: 'inside' }
+                    {
+                        type: 'inside',
+                        disabled: true  // 禁用内部缩放
+                    }
                 ],
                 series: responseTimeSeries
             }, true);
@@ -340,34 +353,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             },
             legend: {
-                orient: 'vertical',
-                right: 10,
-                top: 'middle'
+                orient: 'horizontal',
+                bottom: 10,
+                left: 'center'
             },
             series: [{
                 name: '状态时长分布',
                 type: 'pie',
-                radius: ['45%', '70%'],
-                center: ['40%', '50%'],
+                radius: ['40%', '65%'],
+                center: ['50%', '45%'],
                 data: pieData,
                 label: {
                     formatter: info => `${info.name}\n${Number(info.percent).toFixed(1)}%`
                 },
                 emphasis: {
                     scale: true,
-                    scaleSize: 6
+                    scaleSize: 8
                 }
             }]
         }, true);
     }
-
     function updateSummaryCards(data, selectedSites) {
         if (!summaryElements.siteCount) {
             return;
         }
         const selectedCount = selectedSites.length;
         summaryElements.siteCount.textContent = String(selectedCount);
-
         if (!data || Object.keys(data).length === 0) {
             summaryElements.avgUptime.textContent = '--';
             summaryElements.avgResponse.textContent = '--';
@@ -377,14 +388,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             return;
         }
-
         let availabilitySum = 0;
         let availabilityCount = 0;
         let responseSum = 0;
         let responseCount = 0;
         let downSegments = 0;
         let slowSegments = 0;
-
         Object.values(data).forEach(siteData => {
             const availability = siteData.overall_stats?.availability;
             if (Number.isFinite(availability)) {
@@ -401,24 +410,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (segment[2] === 2) slowSegments += 1;
             });
         });
-
         const avgAvailability = availabilityCount ? (availabilitySum / availabilityCount) : null;
         const avgResponse = responseCount ? (responseSum / responseCount) : null;
         const totalIncidents = downSegments + slowSegments;
-
         summaryElements.avgUptime.textContent = avgAvailability !== null ? `${avgAvailability.toFixed(2)}%` : '--';
         summaryElements.avgResponse.textContent = avgResponse !== null ? avgResponse.toFixed(2) : '0.00';
         summaryElements.incidents.textContent = String(totalIncidents);
-
         if (summaryElements.incidentHint) {
             summaryElements.incidentHint.textContent = totalIncidents > 0 ? `宕机：${downSegments} · 慢：${slowSegments}` : '宕机 + 性能告警';
         }
     }
-
     async function updateDashboard() {
         const selectedSites = Array.from(document.querySelectorAll('#site-selector input:checked')).map(el => el.value);
         updateSummaryCards(null, selectedSites);
-
         if (selectedSites.length === 0) {
             setChartEmptyState(timelineChart, timelineChartContainer, '请选择至少一个网站以查看历史数据');
             setChartEmptyState(uptimeChart, uptimeChartContainer, '请选择至少一个网站以查看可用率');
@@ -428,17 +432,14 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             return;
         }
-
         setChartEmptyState(timelineChart, timelineChartContainer, null);
         timelineChart.showLoading();
         if (statusDistributionChart && statusDistributionChartContainer) {
             setChartEmptyState(statusDistributionChart, statusDistributionChartContainer, null);
             statusDistributionChart.showLoading('');
         }
-
         const siteParams = selectedSites.map(s => `sites=${encodeURIComponent(s)}`).join('&');
         const timeParams = `start_time=${currentParams.start_iso}&end_time=${currentParams.end_iso}`;
-
         try {
             const response = await fetch(`/api/history?${siteParams}&${timeParams}`);
             if (!response.ok) {
@@ -464,12 +465,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     }
-
     async function updateStatusWall(initialData = null) {
         const data = initialData || await (await fetch('/health')).json();
         const wall = document.getElementById('status-wall');
         const siteOrder = Array.from(document.querySelectorAll('#site-selector input')).map(el => el.value);
-
         wall.innerHTML = siteOrder.map(siteName => {
             if (!data[siteName]) return '';
             const site = data[siteName];
@@ -495,10 +494,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>`;
         }).join('');
     }
-
     const toLocalISOString = dt =>
         `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}T${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
-
     function setAndTriggerUpdate(startDate, endDate) {
         currentParams = {
             start_iso: toLocalISOString(startDate),
@@ -506,16 +503,13 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         updateDashboard();
     }
-
     function initializeControls() {
         const earliestDate = new Date();
         earliestDate.setDate(earliestDate.getDate() - dataRetentionDays);
-
         const customRangeStartInput = document.getElementById('custom-range-start');
         const customRangeEndInput = document.getElementById('custom-range-end');
         const applyCustomRangeBtn = document.getElementById('apply-custom-range');
         const clearCustomRangeBtn = document.getElementById('clear-custom-range');
-
         const pickerOptions = {
             enableTime: true,
             time_24hr: true,
@@ -525,16 +519,26 @@ document.addEventListener('DOMContentLoaded', () => {
             minuteIncrement: 5,
             plugins: [new rangePlugin({ input: '#custom-range-end' })],
             onChange: (selectedDates) => {
-                applyCustomRangeBtn.disabled = selectedDates.length !== 2;
+                if (selectedDates.length === 2) {
+                    const [start, end] = selectedDates;
+                    const diffDays = (end - start) / (1000 * 60 * 60 * 24);
+
+                    if (diffDays > dataRetentionDays) {
+                        alert(`自定义时间范围不能超过${dataRetentionDays}天，请重新选择`);
+                        rangePicker.clear();
+                        applyCustomRangeBtn.disabled = true;
+                    } else {
+                        applyCustomRangeBtn.disabled = false;
+                    }
+                } else {
+                    applyCustomRangeBtn.disabled = true;
+                }
             }
         };
-
         if (pickerLocale !== 'default') {
             pickerOptions.locale = pickerLocale;
         }
-
         rangePicker = flatpickr(customRangeStartInput, pickerOptions);
-
         applyCustomRangeBtn.addEventListener('click', () => {
             const selectedDates = rangePicker.selectedDates;
             if (selectedDates.length === 2) {
@@ -545,17 +549,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (start < earliestDate) {
                     start = new Date(earliestDate.getTime());
                 }
+
+                const diffDays = (end - start) / (1000 * 60 * 60 * 24);
+                if (diffDays > dataRetentionDays) {
+                    alert(`自定义时间范围不能超过${dataRetentionDays}天`);
+                    return;
+                }
+
                 document.querySelector('#time-range-selector .active')?.classList.remove('active');
                 setAndTriggerUpdate(start, end);
             }
         });
-
         clearCustomRangeBtn.addEventListener('click', () => {
             rangePicker.clear();
             customRangeEndInput.value = '';
             applyCustomRangeBtn.disabled = true;
         });
-
         document.getElementById('time-range-selector').addEventListener('click', (e) => {
             if (e.target.tagName !== 'BUTTON') return;
             const range = e.target.dataset.range;
@@ -566,7 +575,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!match) return;
             const value = parseInt(match[1], 10);
             const unit = match[2];
-
             switch (unit) {
                 case 'm':
                     start.setMinutes(start.getMinutes() - value);
@@ -586,11 +594,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 default:
                     break;
             }
-
             if (start < earliestDate) {
                 start = new Date(earliestDate.getTime());
             }
-
             document.querySelector('#time-range-selector .active')?.classList.remove('active');
             e.target.classList.add('active');
             rangePicker.clear();
@@ -598,7 +604,6 @@ document.addEventListener('DOMContentLoaded', () => {
             applyCustomRangeBtn.disabled = true;
             setAndTriggerUpdate(start, end);
         });
-
         document.getElementById('site-selector').addEventListener('change', updateDashboard);
         document.getElementById('select-all').addEventListener('click', () => {
             document.querySelectorAll('#site-selector input').forEach(el => el.checked = true);
@@ -609,13 +614,11 @@ document.addEventListener('DOMContentLoaded', () => {
             updateDashboard();
         });
     }
-
     // --- 初始加载 ---
     initializeControls();
     document.querySelector('#time-range-selector button.active').click();
     updateStatusWall(initialStatuses);
     setInterval(() => updateStatusWall(), 15000);
-
     window.addEventListener('resize', () => {
         if (timelineChart && !timelineChart.isDisposed()) timelineChart.resize();
         if (uptimeChart && !uptimeChart.isDisposed()) uptimeChart.resize();

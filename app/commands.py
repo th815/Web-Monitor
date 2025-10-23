@@ -33,9 +33,8 @@ def init_db_command():
         default_sites = [
             {"name": "谷歌", "url": "https://www.google.com"},
             {"name": "GitHub", "url": "https://www.github.com"},
-            {"name": "ERP系统", "url": "https://erp.huimaisoft.com"},
-            {"name": "SCM系统", "url": "https://scm-pc.huimaisoft.com"},
-            {"name": "不存在的网站", "url": "http://thiswebsitedoesnotexist.com"},
+            {"name": "百度", "url": "https://www.baidu.com"},
+            {"name": "不存在的网站", "url": "http://tianhaozuishuai.com"},
             {"name": "响应慢的网站", "url": "http://httpbin.org/delay/5"},
         ]
         for site_data in default_sites:

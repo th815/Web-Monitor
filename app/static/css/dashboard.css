@@ -488,3 +488,175 @@ padding-bottom: 40px;
 #timeline-chart {
 overflow: visible;
 }
+/* === 响应时间图表优化 === */
+#response-time-chart .echarts-x-axis text {
+    font-size: 12px !important;
+}
+/* 确保 dataZoom 滑块不被遮挡 */
+.chart-container {
+    position: relative;
+    overflow: visible !important;
+}
+/* 状态分布图优化 - 调整为横向布局 */
+#status-distribution-chart {
+    min-height: 320px;
+}
+/* 时间选择器一行显示优化 */
+.custom-range {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+}
+@media (max-width: 768px) {
+    .custom-range {
+        flex-wrap: wrap;
+    }
+
+    #custom-range-start,
+    #custom-range-end {
+        width: calc(50% - 25px);
+        min-width: 140px;
+    }
+}
+/* 时间按钮优化 */
+.options-wrapper--time {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+.time-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    min-width: 80px;
+    text-align: center;
+}
+/* 响应式优化 */
+@media (max-width: 576px) {
+    .time-btn {
+        min-width: 70px;
+        padding: 6px 10px;
+        font-size: 13px;
+    }
+
+    .custom-range button {
+        padding: 6px 12px;
+        font-size: 13px;
+    }
+}
+/* 图表加载和空状态优化 */
+.chart-empty::after {
+    font-size: 15px;
+    font-weight: 500;
+    color: #94a3b8;
+}
+/* 确保图表区域不被滚动条遮挡 */
+.uptime-history-container,
+.chart-container {
+    overflow: visible;
+    padding-bottom: 15px;
+}
+/* ECharts dataZoom 滑块样式优化 */
+.chart-container canvas {
+    position: relative;
+    z-index: 1;
+}
+/* 响应时间图表 X 轴标签优化 */
+#response-time-chart {
+    padding-bottom: 30px;
+}
+/* 防止触摸板/鼠标滚轮缩放图表 */
+.chart-container canvas {
+    touch-action: pan-y;
+}
+/* 状态分布图图例位置优化 */
+#status-distribution-chart .echarts-legend {
+    bottom: 10px !important;
+}
+/* 时间选择器容器优化 - 确保在一行显示 */
+.control-group--time .options-wrapper--time {
+    display: flex;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.control-group--time .custom-range {
+    margin-top: 10px;
+}
+/* 自定义时间范围输入框优化 */
+#custom-range-start,
+#custom-range-end {
+    flex: 1 1 auto;
+    max-width: 180px;
+    min-width: 150px;
+}
+.range-separator {
+    flex-shrink: 0;
+    padding: 0 5px;
+}
+/* 按钮组优化 */
+.custom-range button {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+/* Flatpickr 日历样式优化 */
+.flatpickr-calendar {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border-radius: 8px;
+}
+.flatpickr-day.selected {
+    background: #3498db;
+    border-color: #3498db;
+}
+/* 统计卡片响应式优化 */
+@media (max-width: 768px) {
+    .summary-cards {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+@media (max-width: 480px) {
+    .summary-cards {
+        grid-template-columns: 1fr;
+    }
+}
+/* 控制面板响应式优化 */
+@media (max-width: 992px) {
+    .controls {
+        grid-template-columns: 1fr;
+    }
+
+    .control-group--sites {
+        grid-column: 1;
+    }
+}
+/* 提示文字样式优化 */
+.control-hint {
+    font-size: 13px;
+    color: #666;
+    line-height: 1.5;
+    margin-top: 8px;
+}
+/* 图表标题样式统一 */
+.chart-container h2,
+.uptime-history-container h2 {
+    margin-bottom: 15px;
+    font-size: 1.3em;
+}
+/* 状态墙响应式优化 */
+@media (max-width: 768px) {
+    #status-wall {
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    }
+}
+@media (max-width: 480px) {
+    #status-wall {
+        grid-template-columns: 1fr;
+    }
+}
+/* 图表工具提示样式优化 */
+.echarts-tooltip {
+    max-width: 350px !important;
+    word-wrap: break-word;
+}

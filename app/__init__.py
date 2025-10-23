@@ -65,6 +65,9 @@ def create_app(config_object='config'):
     extensions.admin.add_view(HealthCheckLogView(HealthCheckLog, extensions.db.session, name="监控日志"))
     extensions.admin.add_view(MonitoringSettingsView(name="监控参数", category="系统设置", endpoint='monitor_config'))
 
+    from .routes import NotificationSettingsView
+    extensions.admin.add_view(NotificationSettingsView(name="通知设置", category="系统设置", endpoint='notification_config'))
+
     extensions.admin.add_link(MenuLink(name='查看面板', url='/', icon_type='fa', icon_value='fa-desktop'))
     extensions.admin.add_view(ThemeSettingsView(name="更换主题", category="用户操作", endpoint='themes'))
     extensions.admin.add_link(MenuLink(name='修改密码', url='/admin/change-password', category='用户操作', icon_type='fa', icon_value='fa-key'))
@@ -80,7 +83,10 @@ def create_app(config_object='config'):
         extensions.db.create_all()
         monitoring_config = MonitoringConfig.ensure(app.config)
         monitoring_config.apply_to_config(app.config)
-
+        # 【新增】加载通知配置
+        from .models import NotificationConfig
+        notification_config = NotificationConfig.get_or_create()
+        notification_config.apply_to_config(app.config)
     # 8. 配置和启动后台定时任务
     if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         if not extensions.scheduler.running:

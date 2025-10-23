@@ -1,3 +1,4 @@
+# web-monitor/app/models.py
 import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -172,3 +173,111 @@ class MonitoringConfig(db.Model):
 
     def __repr__(self):
         return f'<MonitoringConfig id={self.id} interval={self.monitor_interval_seconds}s>'
+
+
+class NotificationConfig(db.Model):
+    __tablename__ = 'notification_config'
+    id = db.Column(db.Integer, primary_key=True)
+    webhook_enabled = db.Column(db.Boolean, nullable=False, default=False)
+    webhook_url = db.Column(db.String(512), nullable=True)
+    webhook_content_type = db.Column(db.String(128), nullable=False, default='application/json')
+    webhook_headers = db.Column(db.Text, nullable=True)
+    webhook_template = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = db.Column(
+        db.DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+    DEFAULT_TEMPLATE = """{
+  "event": "{{ event }}",
+  "title": "{{ event_title }}",
+  "site": {
+    "name": "{{ site_name }}",
+    "url": "{{ site_url }}"
+  },
+  "status": {
+    "key": "{{ status_key }}",
+    "label": "{{ status_label }}",
+    "previous": "{{ previous_status }}"
+  },
+  "severity": "{{ severity|default('info') }}",
+  "operator": "{{ operator|default('') }}",
+  "timestamp": "{{ timestamp }}",
+  "http_code": {{ http_code|default('null') }},
+  "error_detail": {{ error_detail|tojson }},
+  "extra": {{ details|tojson }}
+}"""
+
+    @staticmethod
+    def default_template():
+        return NotificationConfig.DEFAULT_TEMPLATE
+
+    @staticmethod
+    def sample_payload():
+        now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        return {
+            'event': 'site_status_change',
+            'event_title': '网站宕机告警通知',
+            'site_name': '示例站点',
+            'site_url': 'https://status.example.com',
+            'status_key': 'down',
+            'status_label': '无法访问',
+            'previous_status': '正常',
+            'severity': 'warning',
+            'operator': '自动监控系统',
+            'timestamp': now,
+            'http_code': 503,
+            'error_detail': '连接超时',
+            'details': [
+                {'label': '检测时间', 'value': now},
+                {'label': '连续失败次数', 'value': 3}
+            ]
+        }
+
+    @classmethod
+    def get_or_create(cls):
+        config = cls.query.first()
+        if not config:
+            config = cls(
+                webhook_enabled=False,
+                webhook_template=cls.DEFAULT_TEMPLATE
+            )
+            db.session.add(config)
+            db.session.commit()
+        return config
+
+    def populate_form(self, form):
+        form.webhook_enabled.data = self.webhook_enabled
+        form.webhook_url.data = self.webhook_url
+        form.webhook_content_type.data = self.webhook_content_type or 'application/json'
+        form.webhook_headers.data = self.webhook_headers
+        form.webhook_template.data = self.webhook_template or self.DEFAULT_TEMPLATE
+
+    def update_from_form(self, form):
+        self.webhook_enabled = form.webhook_enabled.data
+        self.webhook_url = form.webhook_url.data
+        self.webhook_content_type = form.webhook_content_type.data or 'application/json'
+        self.webhook_headers = form.webhook_headers.data
+        self.webhook_template = form.webhook_template.data
+        self.updated_at = datetime.datetime.utcnow()
+
+    def apply_to_config(self, app_config):
+        app_config['GENERIC_WEBHOOK_ENABLED'] = self.webhook_enabled
+        app_config['GENERIC_WEBHOOK_URL'] = self.webhook_url
+        app_config['GENERIC_WEBHOOK_CONTENT_TYPE'] = self.webhook_content_type
+
+        if self.webhook_headers:
+            try:
+                import json
+                app_config['GENERIC_WEBHOOK_HEADERS'] = json.loads(self.webhook_headers)
+            except:
+                app_config['GENERIC_WEBHOOK_HEADERS'] = {}
+        else:
+            app_config['GENERIC_WEBHOOK_HEADERS'] = {}
+
+        app_config['GENERIC_WEBHOOK_TEMPLATE'] = self.webhook_template
+
+    def __repr__(self):
+        return f'<NotificationConfig id={self.id} enabled={self.webhook_enabled}>'

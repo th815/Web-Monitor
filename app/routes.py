@@ -43,6 +43,110 @@ def format_datetime_gmt8(view, context, model, name):
     return gmt8_dt.strftime('%Y-%m-%d %H:%M:%S') if gmt8_dt else ''
 
 
+class NotificationSettingsView(BaseView):
+    menu_icon_type = 'fa'
+    menu_icon_value = 'fa-bell'
+
+    @expose('/', methods=['GET', 'POST'])
+    def index(self):
+        if not current_user.is_authenticated:
+            return redirect(url_for('admin.login', next=request.url))
+        from .models import NotificationConfig
+        from .forms import NotificationSettingsForm
+
+        form = NotificationSettingsForm()
+        config_record = NotificationConfig.get_or_create()
+        if not form.is_submitted():
+            config_record.populate_form(form)
+        # 处理测试通知
+        if form.test_webhook.data and form.validate():
+            sample_payload = NotificationConfig.sample_payload()
+            # 临时应用表单配置
+            temp_config = {
+                'GENERIC_WEBHOOK_ENABLED': form.webhook_enabled.data,
+                'GENERIC_WEBHOOK_URL': form.webhook_url.data,
+                'GENERIC_WEBHOOK_CONTENT_TYPE': form.webhook_content_type.data or 'application/json',
+                'GENERIC_WEBHOOK_TEMPLATE': form.webhook_template.data
+            }
+            if form.webhook_headers.data:
+                try:
+                    import json
+                    temp_config['GENERIC_WEBHOOK_HEADERS'] = json.loads(form.webhook_headers.data)
+                except:
+                    temp_config['GENERIC_WEBHOOK_HEADERS'] = {}
+            else:
+                temp_config['GENERIC_WEBHOOK_HEADERS'] = {}
+
+            # 临时更新 app.config
+            old_config = {}
+            for key, value in temp_config.items():
+                old_config[key] = current_app.config.get(key)
+                current_app.config[key] = value
+
+            # 发送测试
+            from .services import send_generic_webhook
+            success = send_generic_webhook('test_notification', sample_payload)
+
+            # 恢复配置
+            for key, value in old_config.items():
+                current_app.config[key] = value
+
+            if success:
+                flash('测试通知发送成功！', 'success')
+            else:
+                flash('测试通知发送失败，请检查配置或查看日志。', 'danger')
+            return redirect(url_for('.index'))
+        # 保存配置
+        if form.submit.data and form.validate_on_submit():
+            try:
+                config_record.update_from_form(form)
+                db.session.commit()
+                config_record.apply_to_config(current_app.config)
+
+                operator = current_user.username if current_user.is_authenticated else None
+                details = [
+                    ('Webhook 状态', '已启用' if config_record.webhook_enabled else '已禁用'),
+                    ('Webhook URL', config_record.webhook_url or '未配置')
+                ]
+                send_management_notification('通知配置更新', operator=operator, details=details)
+
+                flash('通知配置已保存。', 'success')
+                return redirect(url_for('.index'))
+            except Exception as exc:
+                db.session.rollback()
+                current_app.logger.exception('保存通知配置失败: %s', exc)
+                flash('保存配置失败，请稍后重试。', 'danger')
+        elif form.is_submitted():
+            flash('请修正表单中的错误后再提交。', 'danger')
+        # 生成预览
+        preview_payload = None
+        preview_rendered = None
+        preview_error = None
+
+        if config_record.webhook_template:
+            from .services import render_webhook_template
+            preview_payload = NotificationConfig.sample_payload()
+            preview_rendered, preview_error = render_webhook_template(
+                config_record.webhook_template,
+                preview_payload
+            )
+        return self.render(
+            'admin/notification_settings.html',
+            form=form,
+            preview_rendered=preview_rendered,
+            preview_error=preview_error,
+            preview_payload=preview_payload,
+            default_template=NotificationConfig.DEFAULT_TEMPLATE
+        )
+
+    def is_accessible(self):
+        return current_user.is_authenticated
+
+    def _handle_view(self, name, **kwargs):
+        if not self.is_accessible():
+            return redirect(url_for('admin.login', next=request.url))
+
+
 # --- 安全后台的核心 ---
 # 创建一个自定义的后台主页视图，要求登录
 class MyAdminIndexView(AdminIndexView):

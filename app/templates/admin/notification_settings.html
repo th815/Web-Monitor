@@ -1,0 +1,191 @@
+{% extends 'admin/master.html' %}
+
+{% block body %}
+<div class="container-fluid">
+    <h2><i class="fa fa-bell"></i> 通知设置</h2>
+    <p class="text-muted">配置自定义 Webhook 通知，支持灵活的模板定制。</p>
+    <hr>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <form method="POST" class="form-horizontal">
+        {{ form.hidden_tag() }}
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">基本配置</h5>
+            </div>
+            <div class="card-body">
+                <div class="form-group row">
+                    <label class="col-sm-3 col-form-label">{{ form.webhook_enabled.label }}</label>
+                    <div class="col-sm-9">
+                        <div class="custom-control custom-switch">
+                            {{ form.webhook_enabled(class="custom-control-input") }}
+                            <label class="custom-control-label" for="webhook_enabled">启用后将通过 Webhook 发送监控通知</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group row">
+                    <label class="col-sm-3 col-form-label">{{ form.webhook_url.label }}</label>
+                    <div class="col-sm-9">
+                        {{ form.webhook_url(class="form-control", placeholder="https://your-webhook-endpoint.com/notifications") }}
+                        {% if form.webhook_url.errors %}
+                            <div class="text-danger">{{ form.webhook_url.errors[0] }}</div>
+                        {% endif %}
+                        <small class="form-text text-muted">接收 Webhook 通知的完整 URL 地址</small>
+                    </div>
+                </div>
+
+                <div class="form-group row">
+                    <label class="col-sm-3 col-form-label">{{ form.webhook_content_type.label }}</label>
+                    <div class="col-sm-9">
+                        {{ form.webhook_content_type(class="form-control", placeholder="application/json") }}
+                        <small class="form-text text-muted">HTTP Content-Type 头，通常为 application/json</small>
+                    </div>
+                </div>
+
+                <div class="form-group row">
+                    <label class="col-sm-3 col-form-label">{{ form.webhook_headers.label }}</label>
+                    <div class="col-sm-9">
+                        {{ form.webhook_headers(class="form-control", rows=3) }}
+                        {% if form.webhook_headers.errors %}
+                            <div class="text-danger">{{ form.webhook_headers.errors[0] }}</div>
+                        {% endif %}
+                        <small class="form-text text-muted">
+                            可选的自定义 HTTP 请求头，JSON 格式。例如：<br>
+                            <code>{"Authorization": "Bearer your-token", "X-Custom-Header": "value"}</code>
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">消息模板</h5>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-toggle="modal" data-target="#templateHelpModal">
+                    <i class="fa fa-question-circle"></i> 模板帮助
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="form-group">
+                    {{ form.webhook_template(class="form-control", style="font-family: monospace; font-size: 13px;") }}
+                    {% if form.webhook_template.errors %}
+                        <div class="text-danger">{{ form.webhook_template.errors[0] }}</div>
+                    {% endif %}
+                    <small class="form-text text-muted">
+                        使用 Jinja2 模板语法定制通知内容。支持的变量请查看模板帮助。
+                    </small>
+                </div>
+
+                <div class="mt-3">
+                    <button type="button" class="btn btn-outline-info btn-sm" onclick="document.getElementById('webhook_template').value = `{{ default_template|safe }}`;">
+                        <i class="fa fa-undo"></i> 恢复默认模板
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        {% if preview_rendered or preview_error %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">模板预览</h5>
+            </div>
+            <div class="card-body">
+                {% if preview_error %}
+                    <div class="alert alert-danger">
+                        <strong>模板渲染错误：</strong> {{ preview_error }}
+                    </div>
+                {% else %}
+                    <p class="text-muted">以下是使用示例数据渲染的结果：</p>
+                    <pre style="background: #f5f5f5; padding: 15px; border-radius: 5px; max-height: 400px; overflow-y: auto;"><code>{{ preview_rendered }}</code></pre>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="form-group">
+            {{ form.test_webhook(class="btn btn-info") }}
+            {{ form.submit(class="btn btn-primary") }}
+            <a href="{{ url_for('admin.index') }}" class="btn btn-secondary">返回</a>
+        </div>
+    </form>
+</div>
+
+<!-- 模板帮助模态框 -->
+<div class="modal fade" id="templateHelpModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Webhook 模板帮助</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <h6>可用变量</h6>
+                <table class="table table-sm table-bordered">
+                    <thead>
+                        <tr>
+                            <th>变量名</th>
+                            <th>说明</th>
+                            <th>示例值</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><code>event</code></td><td>事件类型</td><td>site_status_change</td></tr>
+                        <tr><td><code>event_title</code></td><td>事件标题</td><td>网站宕机告警通知</td></tr>
+                        <tr><td><code>site_name</code></td><td>网站名称</td><td>示例站点</td></tr>
+                        <tr><td><code>site_url</code></td><td>网站地址</td><td>https://example.com</td></tr>
+                        <tr><td><code>status_key</code></td><td>状态键</td><td>down / slow / recovered / slow_recovered</td></tr>
+                        <tr><td><code>status_label</code></td><td>状态描述</td><td>无法访问 / 访问过慢 / 已恢复正常</td></tr>
+                        <tr><td><code>previous_status</code></td><td>上次状态</td><td>正常</td></tr>
+                        <tr><td><code>severity</code></td><td>严重级别</td><td>warning / info</td></tr>
+                        <tr><td><code>operator</code></td><td>操作人</td><td>自动监控系统 / 管理员</td></tr>
+                        <tr><td><code>timestamp</code></td><td>时间戳</td><td>2025-01-15 10:30:45</td></tr>
+                        <tr><td><code>http_code</code></td><td>HTTP 状态码</td><td>503 或 null</td></tr>
+                        <tr><td><code>error_detail</code></td><td>错误详情</td><td>连接超时 或 null</td></tr>
+                        <tr><td><code>details</code></td><td>额外信息数组</td><td>[{label: '...', value: '...'}]</td></tr>
+                    </tbody>
+                </table>
+
+                <h6 class="mt-4">Jinja2 语法示例</h6>
+                <pre><code>{{ "{{" }} site_name {{ "}}" }}  - 输出变量
+{{ "{{" }} status_label|upper {{ "}}" }}  - 转大写
+{{ "{% if http_code %}" }}HTTP状态码: {{ "{{" }} http_code {{ "}}" }}{{ "{% endif %}" }}  - 条件判断
+{{ "{{" }} details|tojson {{ "}}" }}  - 转为 JSON</code></pre>
+
+                <h6 class="mt-4">企业微信 Markdown 格式示例</h6>
+                <pre><code>{
+  "msgtype": "markdown",
+  "markdown": {
+    "content": "## {{ "{{" }} event_title {{ "}}" }}\n> 网站: {{ "{{" }} site_name {{ "}}" }}\n> 状态: {{ "{{" }} status_label {{ "}}" }}"
+  }
+}</code></pre>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .custom-switch .custom-control-input:checked ~ .custom-control-label::before {
+        background-color: #28a745;
+        border-color: #28a745;
+    }
+</style>
+{% endblock %}
