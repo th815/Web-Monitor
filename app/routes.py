@@ -28,15 +28,7 @@ from .models import (
 )
 from .services import site_statuses, status_lock, send_management_notification
 
-# --- 【新增】时区转换和格式化帮助函数 ---
-def to_gmt8(utc_dt):
-    """将 UTC datetime 对象转换为 GMT+8 时区的 datetime 对象"""
-    if utc_dt is None:
-        return None
-    # 创建一个 UTC+8 的时区对象
-    gmt8_tz = timezone(datetime.timedelta(hours=8))
-    return utc_dt.replace(tzinfo=timezone.utc).astimezone(gmt8_tz)
-
+from .utils import to_gmt8
 
 def format_datetime_gmt8(view, context, model, name):
     """Flask-Admin 字段格式化函数，将 UTC 时间转为 GMT+8 字符串"""
@@ -698,7 +690,7 @@ def get_history():
         availability = (up_count / len(logs) * 100) if logs else 0
         valid_times = [log.response_time_seconds for log in logs if log.response_time_seconds is not None]
         avg_response_time = sum(valid_times) / len(valid_times) if valid_times else 0
-        
+
         # 计算 P95 和 P99
         p95_response_time = 0
         p99_response_time = 0
@@ -721,14 +713,14 @@ def get_history():
         today_start = datetime.datetime.combine(now_utc.date(), datetime.time.min, tzinfo=timezone.utc)
         week_start = now_utc - datetime.timedelta(days=7)
         month_start = now_utc - datetime.timedelta(days=30)
-        
+
         def calc_availability_for_period(period_start, period_end):
             period_logs = [log for log in logs if period_start <= log.timestamp.replace(tzinfo=timezone.utc) <= period_end]
             if not period_logs:
                 return availability  # 如果没有数据，返回整体可用率
             period_up_count = sum(1 for log in period_logs if log.status in ['正常', '访问过慢'])
             return (period_up_count / len(period_logs) * 100) if period_logs else 0
-        
+
         sla_today = calc_availability_for_period(today_start, now_utc)
         sla_week = calc_availability_for_period(week_start, now_utc)
         sla_month = calc_availability_for_period(month_start, now_utc)

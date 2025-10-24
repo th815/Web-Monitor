@@ -982,3 +982,39 @@ overflow: visible;
   padding-top: 10px;
   border-top: 1px solid #f0f0f0;
 }
+/* --- 状态墙选择器功能样式 --- */
+/* 1. 让状态卡片看起来可点击 */
+.status-card {
+    cursor: pointer;
+    /* 使用 outline 防止布局抖动，比 border 更好 */
+    outline: 2px solid transparent;
+    outline-offset: -2px; /* 将轮廓线画在内部 */
+    transition: outline-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+/* 2. 定义 "selected" 状态的样式 */
+.status-card.selected {
+    outline-color: #3498db; /* 醒目的蓝色轮廓 */
+    box-shadow: 0 6px 20px rgba(52, 152, 219, 0.3);
+    transform: translateY(-3px); /* 轻微上浮效果 */
+}
+/* 3. 状态墙标题布局 */
+.status-wall-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    /* 确保 h2 标题不带下划线，因为它现在是 header 的一部分 */
+    border-bottom: none;
+    padding-bottom: 0;
+    margin-bottom: 16px; /* 与卡片墙的间距 */
+}
+.status-wall-header h2 {
+    border-bottom: none;
+    padding-bottom: 0;
+    margin: 0;
+}
+.status-wall-actions {
+    display: flex;
+    gap: 10px;
+}

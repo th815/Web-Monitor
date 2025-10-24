@@ -10,10 +10,73 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from flask import current_app
 from .extensions import db
 from .models import HealthCheckLog, MonitoredSite, NotificationChannel
+from .utils import to_gmt8
 
 # --- 全局状态变量 ---
 site_statuses = {}
 status_lock = threading.Lock()
+
+
+# --- 服务启动时的状态初始化函数 ---
+def initialize_site_statuses(app):
+    """
+    在服务启动时从数据库恢复站点的最新状态，预热 site_statuses 字典。
+    """
+    with app.app_context():
+        print("正在从数据库初始化站点状态...")
+        try:
+            active_sites = MonitoredSite.query.filter_by(is_active=True).all()
+            site_names = [site.name for site in active_sites]
+            if not site_names:
+                print("没有活动的监控站点，初始化完成。")
+                return
+            # 使用 SQL 子查询找到每个站点的最新日志记录
+            from sqlalchemy import func
+            subquery = db.session.query(
+                HealthCheckLog.site_name,
+                func.max(HealthCheckLog.timestamp).label('max_timestamp')
+            ).filter(HealthCheckLog.site_name.in_(site_names)).group_by(HealthCheckLog.site_name).subquery()
+            latest_logs = db.session.query(HealthCheckLog).join(
+                subquery,
+                db.and_(
+                    HealthCheckLog.site_name == subquery.c.site_name,
+                    HealthCheckLog.timestamp == subquery.c.max_timestamp
+                )
+            ).all()
+            with status_lock:
+                for site in active_sites:
+                    # 为每个站点设置一个默认的未知状态
+                    site_statuses[site.name] = {
+                        "status": "未知",
+                        "last_checked": "N/A",
+                        "response_time_seconds": None,
+                        "total_checks": 0,
+                        # ... 其他字段的默认值 ...
+                        "failure_count": 0,
+                        "success_count": 0,
+                        "slow_count": 0,
+                        "history": [],
+                        "slow_history": [],
+                        "notification_sent": False,
+                        "slow_notification_sent": False,
+                        "down_since": None,
+                        "slow_since": None,
+                        "last_notifications": {},
+                    }
+
+                # 用数据库中的最新日志更新状态
+                for log in latest_logs:
+                    if log.site_name in site_statuses:
+                        site_statuses[log.site_name].update({
+                            "status": log.status,
+                            "last_checked": to_gmt8(log.timestamp).strftime(
+                                '%Y-%m-%d %H:%M:%S') if log.timestamp else 'N/A',
+                            "response_time_seconds": log.response_time_seconds,
+                        })
+
+            print(f"成功初始化 {len(latest_logs)} 个站点的状态。")
+        except Exception as e:
+            print(f"初始化站点状态失败: {e}")
 
 
 # --- 通知函数 ---

@@ -693,7 +693,7 @@ document.addEventListener('DOMContentLoaded', () => {
             },
             grid: {
                 left: 100,
-                right: 30,
+                right: 60,
                 top: 80,
                 bottom: 30,
                 containLabel: false
@@ -1005,11 +1005,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     async function updateDashboard() {
-        const selectedSites = Array.from(document.querySelectorAll('#site-selector input:checked')).map(el => el.value);
+        const selectedSites = Array.from(document.querySelectorAll('.status-card.selected'))
+                             .map(card => card.dataset.siteName);
         updateSummaryCards(null, selectedSites);
         if (selectedSites.length === 0) {
             setChartEmptyState(timelineChart, timelineChartContainer, '请选择至少一个网站以查看历史数据');
-            setChartEmptyState(uptimeChart, uptimeChartContainer, '请选择至少一个网站以查看可用率');
             setChartEmptyState(responseTimeChart, responseTimeChartContainer, '请选择至少一个网站以查看响应时间');
             if (slaComparisonChart && slaComparisonChartContainer) {
                 setChartEmptyState(slaComparisonChart, slaComparisonChartContainer, '请选择至少一个网站以查看 SLA 对比');
@@ -1041,7 +1041,6 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error(error);
             setChartEmptyState(timelineChart, timelineChartContainer, '数据加载失败，请稍后重试');
-            setChartEmptyState(uptimeChart, uptimeChartContainer, '数据加载失败');
             setChartEmptyState(responseTimeChart, responseTimeChartContainer, '数据加载失败');
             if (slaComparisonChart) {
                 setChartEmptyState(slaComparisonChart, slaComparisonChartContainer, '数据加载失败');
@@ -1054,44 +1053,68 @@ document.addEventListener('DOMContentLoaded', () => {
             // }
         }
     }
-    async function updateStatusWall(initialData = null) {
-        const data = initialData || await (await fetch('/health')).json();
-        const wall = document.getElementById('status-wall');
-        const siteOrder = Array.from(document.querySelectorAll('#site-selector input')).map(el => el.value);
-        wall.innerHTML = siteOrder.map(siteName => {
-            if (!data[siteName]) return '';
-            const site = data[siteName];
-            const statusClass = `status-${site.status === '正常' ? 'ok' : (site.status === '访问过慢' ? 'slow' : 'down')}`;
-            const statusSpecificLine =
-                site.status === '无法访问' && site.down_since
-                    ? `<p><strong>故障开始:</strong> ${site.down_since}</p>`
-                    : site.status === '访问过慢' && site.slow_since
-                        ? `<p><strong>减速开始:</strong> ${site.slow_since}</p>`
-                        : '';
-            const totalChecksLine = site.total_checks ? `<p><strong>累计检查:</strong> ${site.total_checks}</p>` : '';
-            const responseTimeText = typeof site.response_time_seconds === 'number'
-                ? `${site.response_time_seconds.toFixed(2)}秒`
-                : 'N/A';
-            return `
-                <div class="status-card ${statusClass}">
-                    <h3>${siteName}</h3>
-                    <p><strong>状态:</strong> ${site.status}</p>
-                    ${statusSpecificLine}
-                    <p><strong>响应时间:</strong> ${responseTimeText}</p>
-                    ${totalChecksLine}
-                    <p><strong>上次检查:</strong> ${site.last_checked}</p>
-                </div>`;
-        }).join('');
-    }
     const toLocalISOString = dt =>
-        `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}T${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
-    function setAndTriggerUpdate(startDate, endDate) {
-        currentParams = {
-            start_iso: toLocalISOString(startDate),
-            end_iso: toLocalISOString(endDate)
-        };
-        updateDashboard();
-    }
+    `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}T${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+function setAndTriggerUpdate(startDate, endDate) {
+    currentParams = {
+        start_iso: toLocalISOString(startDate),
+        end_iso: toLocalISOString(endDate)
+    };
+    updateDashboard();
+}
+    async function updateStatusWall(initialData = null) {
+    const wall = document.getElementById('status-wall');
+
+    // 在重新渲染前，记录当前已选择的站点
+    const previouslySelected = new Set(
+        Array.from(wall.querySelectorAll('.status-card.selected')).map(card => card.dataset.siteName)
+    );
+    // 判断是否是首次加载（此时墙内没有卡片）
+    const isFirstRun = wall.children.length === 0;
+
+    const data = initialData || await (await fetch('/health')).json();
+    // const siteOrder = Array.from(document.querySelectorAll('#site-selector input')).map(el => el.value);
+
+    // 新的获取站点顺序的方式
+    const allSiteNames = Object.keys(data);
+
+    wall.innerHTML = allSiteNames.map(siteName => {
+        if (!data[siteName]) return '';
+        const site = data[siteName];
+        const statusClass = `status-${site.status === '正常' ? 'ok' : (site.status === '访问过慢' ? 'slow' : 'down')}`;
+        const statusSpecificLine =
+            site.status === '无法访问' && site.down_since
+                ? `<p><strong>故障开始:</strong> ${site.down_since}</p>`
+                : site.status === '访问过慢' && site.slow_since
+                    ? `<p><strong>减速开始:</strong> ${site.slow_since}</p>`
+                    : '';
+        const totalChecksLine = site.total_checks ? `<p><strong>累计检查:</strong> ${site.total_checks}</p>` : '';
+        const responseTimeText = typeof site.response_time_seconds === 'number'
+            ? `${site.response_time_seconds.toFixed(2)}秒`
+            : 'N/A';
+
+        // **关键**: 添加 data-site-name 属性，并确保 siteName 被正确转义
+        return `
+            <div class="status-card ${statusClass}" data-site-name="${escapeHtml(siteName)}">
+                <h3>${escapeHtml(siteName)}</h3>
+                <p><strong>状态:</strong> ${site.status}</p>
+                ${statusSpecificLine}
+                <p><strong>响应时间:</strong> ${responseTimeText}</p>
+                ${totalChecksLine}
+                <p><strong>上次检查:</strong> ${site.last_checked}</p>
+            </div>`;
+    }).join('');
+
+    // 重新应用选择状态
+    wall.querySelectorAll('.status-card').forEach(card => {
+        const siteName = card.dataset.siteName;
+        // 如果是首次加载，默认全选。否则，恢复之前的选择。
+        if (isFirstRun || previouslySelected.has(siteName)) {
+            card.classList.add('selected');
+        }
+    });
+}
+
     function initializeControls() {
         const earliestDate = new Date();
         earliestDate.setDate(earliestDate.getDate() - dataRetentionDays);
@@ -1193,25 +1216,50 @@ document.addEventListener('DOMContentLoaded', () => {
             applyCustomRangeBtn.disabled = true;
             setAndTriggerUpdate(start, end);
         });
-        document.getElementById('site-selector').addEventListener('change', updateDashboard);
-        document.getElementById('select-all').addEventListener('click', () => {
-            document.querySelectorAll('#site-selector input').forEach(el => el.checked = true);
-            updateDashboard();
-        });
-        document.getElementById('deselect-all').addEventListener('click', () => {
-            document.querySelectorAll('#site-selector input').forEach(el => el.checked = false);
-            updateDashboard();
-        });
+            document.getElementById('status-wall').addEventListener('click', (e) => {
+                const card = e.target.closest('.status-card');
+                if (card) {
+                    card.classList.toggle('selected');
+                    updateDashboard(); // 点击后立即更新图表
+                }
+            });
+            // 2. "全选" 按钮
+            document.getElementById('select-all-status').addEventListener('click', () => {
+                document.querySelectorAll('.status-card').forEach(card => card.classList.add('selected'));
+                updateDashboard();
+            });
+            // 3. "全不选" 按钮
+            document.getElementById('deselect-all-status').addEventListener('click', () => {
+                document.querySelectorAll('.status-card').forEach(card => card.classList.remove('selected'));
+                updateDashboard();
+            });
     }
-    // --- 初始加载 ---
-    initializeControls();
-    document.querySelector('#time-range-selector button.active').click();
-    updateStatusWall(initialStatuses);
-    setInterval(() => updateStatusWall(), 15000);
-    window.addEventListener('resize', () => {
-        if (timelineChart && !timelineChart.isDisposed()) timelineChart.resize();
-        if (uptimeChart && !uptimeChart.isDisposed()) uptimeChart.resize();
-        if (responseTimeChart && !responseTimeChart.isDisposed()) responseTimeChart.resize();
-        // if (statusDistributionChart && !statusDistributionChart.isDisposed()) statusDistributionChart.resize();
-    });
+// --- 初始加载 ---
+initializeControls();
+// 1. 使用初始数据渲染状态墙。
+//    updateStatusWall 是 async 函数，返回一个 Promise。
+updateStatusWall(initialStatuses).then(() => {
+    // 2. 状态墙渲染完毕并且卡片已默认选中后，
+    //    再模拟点击时间按钮来触发第一次数据加载。
+    //    这个 .click() 会调用 setAndTriggerUpdate，从而设置好时间并调用 updateDashboard。
+    const activeButton = document.querySelector('#time-range-selector button.active');
+    if (activeButton) {
+        activeButton.click();
+    } else {
+        // 如果没有默认激活的按钮，手动触发一个默认范围
+        console.warn("No active time button found, defaulting to 12 hours.");
+        const end = new Date();
+        const start = new Date(end.getTime() - 12 * 60 * 60 * 1000);
+        setAndTriggerUpdate(start, end);
+    }
+});
+// 3. 设置状态墙的周期性刷新。
+setInterval(() => updateStatusWall(), 15000);
+// 4. 窗口大小调整监听器。
+window.addEventListener('resize', () => {
+    if (timelineChart && !timelineChart.isDisposed()) timelineChart.resize();
+    if (responseTimeChart && !responseTimeChart.isDisposed()) responseTimeChart.resize();
+    if (slaComparisonChart && !slaComparisonChart.isDisposed()) slaComparisonChart.resize();
+});
+
 });

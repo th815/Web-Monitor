@@ -45,29 +45,33 @@
         <div class="dashboard-main">
             <div id="status-wall-container">
                 <h2>实时状态概览</h2>
+                    <div class="status-wall-actions">
+                        <button id="select-all-status" class="control-btn">全选</button>
+                        <button id="deselect-all-status" class="control-btn control-btn--ghost">全不选</button>
+                    </div>
                 <div id="status-wall"></div>
             </div>
 
-            <!-- 只保留站点选择 -->
-            <div class="controls">
-                <div class="control-group control-group--sites">
-                    <div class="control-header">
-                        <span class="group-title">选择网站:</span>
-                        <div class="control-header-actions">
-                            <button id="select-all" class="control-btn">全选</button>
-                            <button id="deselect-all" class="control-btn control-btn--ghost">全不选</button>
-                        </div>
-                    </div>
-                    <div class="options-wrapper options-wrapper--sites" id="site-selector">
-                        {% for site in sites %}
-                        <label class="site-selector-label">
-                            <input type="checkbox" name="site" value="{{ site }}" checked>
-                            <span>{{ site }}</span>
-                        </label>
-                        {% endfor %}
-                    </div>
-                </div>
-            </div>
+{#            <!-- 只保留站点选择 -->#}
+{#            <div class="controls">#}
+{#                <div class="control-group control-group--sites">#}
+{#                    <div class="control-header">#}
+{#                        <span class="group-title">选择网站:</span>#}
+{#                        <div class="control-header-actions">#}
+{#                            <button id="select-all" class="control-btn">全选</button>#}
+{#                            <button id="deselect-all" class="control-btn control-btn--ghost">全不选</button>#}
+{#                        </div>#}
+{#                    </div>#}
+{#                    <div class="options-wrapper options-wrapper--sites" id="site-selector">#}
+{#                        {% for site in sites %}#}
+{#                        <label class="site-selector-label">#}
+{#                            <input type="checkbox" name="site" value="{{ site }}" checked>#}
+{#                            <span>{{ site }}</span>#}
+{#                        </label>#}
+{#                        {% endfor %}#}
+{#                    </div>#}
+{#                </div>#}
+{#            </div>#}
 
             <div id="uptime-tooltip" style="display: none; position: fixed; pointer-events: none;"></div>
 
