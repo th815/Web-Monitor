@@ -80,7 +80,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (nineCount === null) {
             ninesLabel = '';
         } else if (!Number.isFinite(nineCount)) {
-            ninesLabel = '∞个9';
+            ninesLabel = '无限个9';
         } else if (nineCount <= 0) {
             ninesLabel = '不足1个9';
         } else {
@@ -340,8 +340,6 @@ document.addEventListener('DOMContentLoaded', () => {
             grid: { top: 25, left: 120, right: 30, bottom: 90 },
             xAxis: {
                 type: 'time',
-                min: startBoundary,
-                max: endBoundary,
                 axisLabel: {
                     formatter: value => formatChartAxisTime(value)
                 }
@@ -566,11 +564,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 xAxis: {
                     type: 'time',
                     boundaryGap: false,
-                    min: startBoundary,
-                    max: endBoundary,
                     axisLabel: { formatter: value => formatChartAxisTime(value) }
                 },
-                yAxis: { type: 'value', name: '响应时间 (秒)', nameGap: 30 },
+                yAxis: {
+                        type: 'log', // 从 'value' 改为 'log'
+                        name: '响应时间 (秒)',
+                        nameGap: 30,
+                        // 对数轴的标签可以自定义格式，防止出现 0.0001 这样的小数
+                        axisLabel: {
+                            formatter: function (value) {
+                                if (value < 1) {
+                                    return value.toFixed(2); // 小于1秒时，显示两位小数
+                                }
+                                return value.toFixed(1); // 大于等于1秒时，显示一位小数
+                            }
+                        }
+                    },
                 dataZoom: [
                     {
                         type: 'slider',
@@ -588,11 +597,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 series: allSeries.map((s, idx) => {
                     // 如果是 P95/P99 线，保持原样
                     if (s.name.includes('P95') || s.name.includes('P99')) {
-                        return s;
+                        return {
+                            ...s,
+                            connectNulls: true
+                        };
                     }
                     // 否则应用平滑和样式
                     return {
                         ...s,
+                        connectNulls: true,
                         smooth: 0.25,
                         symbol: 'circle',
                         symbolSize: 4,
@@ -676,7 +689,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         let ninesLabel = '';
                         if (nineCount !== null) {
                             if (!Number.isFinite(nineCount)) {
-                                ninesLabel = ' (∞个9)';
+                                ninesLabel = ' (无限个9)';
                             } else if (nineCount > 0) {
                                 ninesLabel = ` (${nineCount}个9)`;
                             }
