@@ -5,8 +5,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- 图表实例与 DOM 引用 ---
     const timelineChartContainer = document.getElementById('timeline-chart');
     let timelineChart = echarts.init(timelineChartContainer);
-    const uptimeChartContainer = document.getElementById('uptime-chart');
-    const uptimeChart = echarts.init(uptimeChartContainer);
+    // const uptimeChartContainer = document.getElementById('uptime-chart');
+    // const uptimeChart = echarts.init(uptimeChartContainer);
     const responseTimeChartContainer = document.getElementById('response-time-chart');
     const responseTimeChart = echarts.init(responseTimeChartContainer);
     const slaComparisonChartContainer = document.getElementById('sla-comparison-chart');
@@ -431,157 +431,78 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
         function renderComparisonCharts(data) {
-        const siteKeys = Object.keys(data || {});
-        if (siteKeys.length === 0) {
-            setChartEmptyState(uptimeChart, uptimeChartContainer, '暂无可用率数据');
-            setChartEmptyState(responseTimeChart, responseTimeChartContainer, '暂无响应时间数据');
-            return;
-        }
-
-        const uptimeCategories = [];
-        const uptimeSeriesData = [];
-        const responseTimeLegends = [];
-        const responseTimeSeries = [];
-        const timestampSet = new Set();
-        const timestampLabelMap = new Map();
-        const siteResponseMaps = new Map();
-
-        siteKeys.forEach(siteName => {
-            const siteData = data[siteName] || {};
-
-            if (siteData.overall_stats) {
-                const availability = siteData.overall_stats.availability;
-                if (Number.isFinite(availability)) {
-                    const availabilityInfo = describeAvailability(availability);
-                    uptimeCategories.push(siteName);
-                    uptimeSeriesData.push({
-                        value: Number(availability.toFixed(4)),
-                        rawValue: availability,
-                        combinedLabel: availabilityInfo.combined,
-                        ninesLabel: availabilityInfo.ninesLabel,
-                    });
+    const siteKeys = Object.keys(data || {});
+    if (siteKeys.length === 0) {
+        // 只保留 responseTimeChart 的空状态设置
+        setChartEmptyState(responseTimeChart, responseTimeChartContainer, '暂无响应时间数据');
+        return;
+    }
+    const responseTimeLegends = [];
+    const responseTimeSeries = [];
+    const timestampSet = new Set();
+    const timestampLabelMap = new Map();
+    const siteResponseMaps = new Map();
+    siteKeys.forEach(siteName => {
+        const siteData = data[siteName] || {};
+        const rtData = siteData.response_times || {};
+        const timestampsMs = Array.isArray(rtData.timestamps_ms) ? rtData.timestamps_ms : [];
+        const timestampLabels = Array.isArray(rtData.timestamps) ? rtData.timestamps : [];
+        const responseTimes = Array.isArray(rtData.times) ? rtData.times : [];
+        const siteTimestampMap = new Map();
+        if (timestampsMs.length > 0) {
+            timestampsMs.forEach((ts, idx) => {
+                if (!Number.isFinite(ts)) {
+                    return;
                 }
-            }
-
-            const rtData = siteData.response_times || {};
-            const timestampsMs = Array.isArray(rtData.timestamps_ms) ? rtData.timestamps_ms : [];
-            const timestampLabels = Array.isArray(rtData.timestamps) ? rtData.timestamps : [];
-            const responseTimes = Array.isArray(rtData.times) ? rtData.times : [];
-            const siteTimestampMap = new Map();
-
-            if (timestampsMs.length > 0) {
-                timestampsMs.forEach((ts, idx) => {
-                    if (!Number.isFinite(ts)) {
-                        return;
-                    }
-                    timestampSet.add(ts);
-                    const label = timestampLabels[idx] || formatChartTooltipTime(ts);
-                    if (label && !timestampLabelMap.has(ts)) {
-                        timestampLabelMap.set(ts, label);
-                    }
-                    const value = idx < responseTimes.length ? responseTimes[idx] : null;
-                    siteTimestampMap.set(ts, value === null || value === undefined ? null : Number(value));
-                });
-            }
-
-            if (siteTimestampMap.size === 0 && timestampLabels.length > 0) {
-                timestampLabels.forEach((label, idx) => {
-                    if (!label) {
-                        return;
-                    }
-                    const parsed = Date.parse(label.replace(' ', 'T'));
-                    if (Number.isNaN(parsed)) {
-                        return;
-                    }
-                    timestampSet.add(parsed);
-                    if (!timestampLabelMap.has(parsed)) {
-                        timestampLabelMap.set(parsed, label);
-                    }
-                    const value = idx < responseTimes.length ? responseTimes[idx] : null;
-                    siteTimestampMap.set(parsed, value === null || value === undefined ? null : Number(value));
-                });
-            }
-
-            siteResponseMaps.set(siteName, siteTimestampMap);
-        });
-
-        const sortedTimestamps = Array.from(timestampSet).sort((a, b) => a - b);
-
-        siteKeys.forEach(siteName => {
-            const siteTimestampMap = siteResponseMaps.get(siteName);
-            if (siteTimestampMap && siteTimestampMap.size > 0) {
-                responseTimeLegends.push(siteName);
-                const seriesData = sortedTimestamps.map(ts => {
-                    const value = siteTimestampMap.has(ts) ? siteTimestampMap.get(ts) : null;
-                    return [ts, value];
-                });
-                responseTimeSeries.push({
-                    name: siteName,
-                    type: 'line',
-                    data: seriesData
-                });
-            }
-        });
-
-        // 【修复】把 uptimeChart.setOption(...) 加回来
-        if (uptimeCategories.length === 0) {
-            setChartEmptyState(uptimeChart, uptimeChartContainer, '暂无可用率数据');
-        } else {
-            setChartEmptyState(uptimeChart, uptimeChartContainer, null);
-            uptimeChart.setOption({
-                tooltip: {
-                    trigger: 'axis',
-                    axisPointer: { type: 'shadow' },
-                    formatter: params => {
-                        if (!params || !params.length) {
-                            return '';
-                        }
-                        const item = params[0];
-                        const dataItem = item.data || {};
-                        const combined = dataItem.combinedLabel || `${Number(item.value).toFixed(2)}%`;
-                        return `${item.marker}${item.name}<br/>可用率：${combined}`;
-                    }
-                },
-                grid: { top: 40, left: 60, right: 30, bottom: 70 },
-                xAxis: { type: 'category', data: uptimeCategories, axisLabel: { interval: 0 } },
-                yAxis: { type: 'value', max: 100, axisLabel: { formatter: '{value}%' } },
-                series: [{
-                    type: 'bar',
-                    barWidth: '45%',
-                    data: uptimeSeriesData,
-                    label: {
-                        show: true,
-                        position: 'top',
-                        formatter: params => {
-                            const dataItem = params.data || {};
-                            if (dataItem.combinedLabel) {
-                                return dataItem.combinedLabel;
-                            }
-                            return `${Number(params.value).toFixed(2)}%`;
-                        },
-                        color: '#333'
-                    },
-                    itemStyle: {
-                        color: function (params) {
-                            const dataItem = params.data || {};
-                            const value = Number.isFinite(dataItem.rawValue) ? dataItem.rawValue : Number(params.value);
-                            if (value >= 99.99) return '#2ecc71';
-                            if (value >= 99.9) return '#67C23A';
-                            if (value >= 99) return '#91cc75';
-                            if (value >= 95) return '#E6A23C';
-                            return '#F56C6C';
-                        }
-                    }
-                }]
-            }, true);
+                timestampSet.add(ts);
+                const label = timestampLabels[idx] || formatChartTooltipTime(ts);
+                if (label && !timestampLabelMap.has(ts)) {
+                    timestampLabelMap.set(ts, label);
+                }
+                const value = idx < responseTimes.length ? responseTimes[idx] : null;
+                siteTimestampMap.set(ts, value === null || value === undefined ? null : Number(value));
+            });
         }
-
-        const startBoundary = parseDate(currentParams.start_iso);
-        const endBoundary = parseDate(currentParams.end_iso);
-
-        if (responseTimeSeries.length === 0 || sortedTimestamps.length === 0) {
-            setChartEmptyState(responseTimeChart, responseTimeChartContainer, '暂无响应时间数据');
-        } else {
+        if (siteTimestampMap.size === 0 && timestampLabels.length > 0) {
+            timestampLabels.forEach((label, idx) => {
+                if (!label) {
+                    return;
+                }
+                const parsed = Date.parse(label.replace(' ', 'T'));
+                if (Number.isNaN(parsed)) {
+                    return;
+                }
+                timestampSet.add(parsed);
+                if (!timestampLabelMap.has(parsed)) {
+                    timestampLabelMap.set(parsed, label);
+                }
+                const value = idx < responseTimes.length ? responseTimes[idx] : null;
+                siteTimestampMap.set(parsed, value === null || value === undefined ? null : Number(value));
+            });
+        }
+        siteResponseMaps.set(siteName, siteTimestampMap);
+    });
+    const sortedTimestamps = Array.from(timestampSet).sort((a, b) => a - b);
+    siteKeys.forEach(siteName => {
+        const siteTimestampMap = siteResponseMaps.get(siteName);
+        if (siteTimestampMap && siteTimestampMap.size > 0) {
+            responseTimeLegends.push(siteName);
+            const seriesData = sortedTimestamps.map(ts => {
+                const value = siteTimestampMap.has(ts) ? siteTimestampMap.get(ts) : null;
+                return [ts, value];
+            });
+            responseTimeSeries.push({
+                name: siteName,
+                type: 'line',
+                data: seriesData
+            });
+        }
+    });
+    const startBoundary = parseDate(currentParams.start_iso);
+    const endBoundary = parseDate(currentParams.end_iso);
+    if (responseTimeSeries.length === 0 || sortedTimestamps.length === 0) {
+        setChartEmptyState(responseTimeChart, responseTimeChartContainer, '暂无响应时间数据');
+    } else {
             setChartEmptyState(responseTimeChart, responseTimeChartContainer, null);
 
             // 添加 P95 和 P99 线
@@ -1128,9 +1049,9 @@ document.addEventListener('DOMContentLoaded', () => {
             renderAlertHistoryError('数据加载失败');
         } finally {
             timelineChart.hideLoading();
-            if (statusDistributionChart) {
-                statusDistributionChart.hideLoading();
-            }
+            // if (statusDistributionChart) {
+            //     statusDistributionChart.hideLoading();
+            // }
         }
     }
     async function updateStatusWall(initialData = null) {
@@ -1291,6 +1212,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (timelineChart && !timelineChart.isDisposed()) timelineChart.resize();
         if (uptimeChart && !uptimeChart.isDisposed()) uptimeChart.resize();
         if (responseTimeChart && !responseTimeChart.isDisposed()) responseTimeChart.resize();
-        if (statusDistributionChart && !statusDistributionChart.isDisposed()) statusDistributionChart.resize();
+        // if (statusDistributionChart && !statusDistributionChart.isDisposed()) statusDistributionChart.resize();
     });
 });
