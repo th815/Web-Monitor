@@ -35,7 +35,6 @@ function renderItem(params, api) {
 
 export const renderUptimeHistory = (data, charts, currentParams, onClickCallback) => {
     const { timelineChart, timelineChartContainer } = charts;
-
     if (!timelineChart || !timelineChartContainer) {
         return;
     }
@@ -44,74 +43,61 @@ export const renderUptimeHistory = (data, charts, currentParams, onClickCallback
         setChartEmptyState(timelineChart, timelineChartContainer, '没有选中任何网站或当前时间范围无数据。');
         return;
     }
-
     setChartEmptyState(timelineChart, timelineChartContainer, null);
-
     const siteNames = Object.keys(data);
-    const series = [];
     const chartHeight = Math.max(160, siteNames.length * 42 + 80);
     timelineChartContainer.style.height = `${chartHeight}px`;
     timelineChart.resize();
-
+    // --- 【核心修改 1】: 创建一个数组来存放所有网站的数据 ---
+    const allSiteData = [];
     siteNames.forEach((siteName, index) => {
         const timelineData = Array.isArray(data?.[siteName]?.timeline_data) ? data[siteName].timeline_data : [];
-        const siteData = timelineData.map(item => [index, item[0], item[1], item[2], item[3]]);
-        series.push({
-            name: siteName,
-            type: 'custom',
-            renderItem,
-            itemStyle: { opacity: 0.85 },
-            encode: { x: [1, 2], y: 0 },
-            data: siteData,
-            progressive: 400,
-            progressiveThreshold: 2000,
-            progressiveChunkMode: 'mod'
+        const siteData = timelineData.map(item => {
+            // 准备 custom series 需要的数据格式
+            // value: [Y轴索引, X开始, X结束, 状态ID, 详情]
+            return {
+                name: siteName, // 把网站名存在 name 里，方便 tooltip
+                value: [index, item[0], item[1], item[2], item[3]]
+            };
         });
+        // 将当前网站的数据合并到总数组中
+        allSiteData.push(...siteData);
     });
-
     const rangeSpan = currentParams ? getTimeRangeSpanMs(currentParams.start_iso, currentParams.end_iso) : null;
-
     const option = {
         animation: false,
         tooltip: {
             trigger: 'item',
-            axisPointer: {
-                type: 'shadow'
-            },
             formatter: function (params) {
                 if (!params || params.seriesType !== 'custom') {
                     return '';
                 }
-                const seriesName = params.seriesName;
-                const details = params.value[4];
-                const startLabel = formatChartTooltipTime(params.value[1]);
-                const endLabel = formatChartTooltipTime(params.value[2]);
-                const status = params.value[3];
-                let tip = `<strong>${seriesName}</strong><br/>时间: ${startLabel} - ${endLabel}<br/>${details}`;
+                // --- 【核心修改 2】: 从 params.name 获取网站名 ---
+                const siteName = params.name;
+                const value = params.value;
+                const details = value[4];
+                const startLabel = formatChartTooltipTime(value[1]);
+                const endLabel = formatChartTooltipTime(value[2]);
+                const status = value[3];
+                let tip = `<strong>${siteName}</strong><br/>时间: ${startLabel} - ${endLabel}<br/>${details}`;
                 if (status === 3 || status === 2) {
                     tip += '<br/><span style="color: #3498db; font-size: 11px;">💡 点击查看相关告警</span>';
                 }
                 return tip;
             }
         },
-        dataZoom: [
-            {
-                type: 'slider',
-                filterMode: 'weakFilter',
-                showDataShadow: false,
-                bottom: 6,
-                height: 24,
-                borderColor: 'transparent',
-                backgroundColor: '#e2e2e2',
-                handleIcon: 'path://M10.7,11.9H9.3c-4.9,0.3-8.8,4.4-8.8,9.4c0,5,3.9,9.1,8.8,9.4h1.3c4.9-0.3,8.8-4.4,8.8-9.4C19.5,16.3,15.6,12.2,10.7,11.9z M13.3,24.4H6.7V23h6.6V24.4z M13.3,22H6.7v-1.4h6.6V22z',
-                handleSize: 20,
-                handleStyle: { color: '#fff', shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.3)' },
-                zoomLock: false,
-                moveOnMouseWheel: false,
-                zoomOnMouseWheel: false,
-                realtime: true
-            }
-        ],
+        dataZoom: [ /* dataZoom 配置保持不变 */ {
+            type: 'slider',
+            filterMode: 'weakFilter',
+            showDataShadow: false,
+            bottom: 6,
+            height: 24,
+            borderColor: 'transparent',
+            backgroundColor: '#e2e2e2',
+            handleIcon: 'path://M10.7,11.9H9.3c-4.9,0.3-8.8,4.4-8.8,9.4c0,5,3.9,9.1,8.8,9.4h1.3c4.9-0.3,8.8-4.4,8.8-9.4C19.5,16.3,15.6,12.2,10.7,11.9z M13.3,24.4H6.7V23h6.6V24.4z M13.3,22H6.7v-1.4h6.6V22z',
+            handleSize: 20,
+            handleStyle: { color: '#fff', shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.3)' },
+        }],
         grid: { top: 25, left: 120, right: 30, bottom: 90 },
         xAxis: {
             type: 'time',
@@ -120,18 +106,28 @@ export const renderUptimeHistory = (data, charts, currentParams, onClickCallback
             }
         },
         yAxis: { type: 'category', data: siteNames, axisLabel: { interval: 0 } },
-        series
+        // --- 【核心修改 3】: 只使用一个 series ---
+        series: [{
+            type: 'custom',
+            renderItem: renderItem,
+            itemStyle: { opacity: 0.85 },
+            encode: { x: [1, 2], y: 0 },
+            data: allSiteData, // 使用包含所有数据的数组
+            progressive: 400,
+            progressiveThreshold: 2000,
+            progressiveChunkMode: 'mod'
+        }]
     };
     timelineChart.setOption(option, true);
-
     timelineChart.off('click');
     timelineChart.on('click', function (params) {
         if (params.seriesType === 'custom' && params.value) {
-            const status = params.value[3];
-            const startTime = params.value[1];
-            const endTime = params.value[2];
-            const siteName = params.seriesName;
-
+            // --- 【核心修改 4】: 从 params.name 获取网站名 ---
+            const siteName = params.name;
+            const value = params.value;
+            const status = value[3];
+            const startTime = value[1];
+            const endTime = value[2];
             if (status === 3 || status === 2) {
                 onClickCallback(siteName, startTime, endTime, status);
             }
