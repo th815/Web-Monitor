@@ -653,19 +653,6 @@ def get_history():
                 current_log = logs[i]
                 current_status = get_simple_status(current_log)
 
-                if current_status == 'down':
-                    start_ts = int(current_log.timestamp.replace(tzinfo=timezone.utc).timestamp() * 1000)
-                    end_ts = start_ts + int(monitor_interval.total_seconds() * 1000)
-                    reason = "未知错误"
-                    if current_log.http_status_code and current_log.http_status_code >= 400:
-                        reason = f"HTTP {current_log.http_status_code}"
-                    elif current_log.error_detail:
-                        reason = current_log.error_detail
-                    details = f"状态: DOWN<br>原因: {reason}"
-                    timeline_data.append([start_ts, end_ts, 3, details])
-                    i += 1
-                    continue
-
                 j = i
                 while j < len(logs) and get_simple_status(logs[j]) == current_status:
                     if j > i and (logs[j].timestamp - logs[j - 1].timestamp) > monitor_interval * 1.5:
@@ -677,11 +664,29 @@ def get_history():
                 end_time = next_event_time.replace(tzinfo=timezone.utc)
                 start_ts = int(start_log.timestamp.replace(tzinfo=timezone.utc).timestamp() * 1000)
                 end_ts = int(end_time.timestamp() * 1000)
-                status_map = {'up': 1, 'slow': 2}
+                status_map = {'up': 1, 'slow': 2, 'down': 3}
                 duration = end_time - start_log.timestamp.replace(tzinfo=timezone.utc)
                 duration_str = str(duration).split('.')[0]
-                avg_resp = sum(l.response_time_seconds for l in segment_logs) / len(segment_logs)
-                details = f"状态: {current_status.upper()}<br>持续: {duration_str}<br>平均响应: {avg_resp:.3f}s"
+                details = f"状态: {current_status.upper()}<br>持续: {duration_str}<br>"
+                if current_status == 'down':
+                    # 找到这段故障期间的第一个具体原因
+                    reason = "未知错误"
+                    first_error_log = next((l for l in segment_logs if
+                                            l.error_detail or (l.http_status_code and l.http_status_code >= 400)),
+                                           segment_logs[0])
+                    if first_error_log.http_status_code and first_error_log.http_status_code >= 400:
+                        reason = f"HTTP {first_error_log.http_status_code}"
+                    elif first_error_log.error_detail:
+                        reason = first_error_log.error_detail
+                    details += f"原因: {reason}"
+                else:  # 'up' or 'slow'
+                    valid_logs = [l for l in segment_logs if l.response_time_seconds is not None]
+                    if valid_logs:
+                        avg_resp = sum(l.response_time_seconds for l in valid_logs) / len(valid_logs)
+                        details += f"平均响应: {avg_resp:.3f}s"
+                    else:
+                        # 如果一个分段里全是None（理论上不太可能，但做个保护）
+                        details += "平均响应: N/A"
                 timeline_data.append([start_ts, end_ts, status_map[current_status], details])
                 i = j
 

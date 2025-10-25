@@ -251,21 +251,46 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- ECharts 自定义渲染函数 ---
-    function renderItem(params, api) {
-        const categoryIndex = api.value(0);
-        const start = api.coord([api.value(1), categoryIndex]);
-        const end = api.coord([api.value(2), categoryIndex]);
-        const height = api.size([0, 1])[1] * 0.8;
-
-        const rectShape = echarts.graphic.clipRectByRect(
-            { x: start[0], y: start[1] - height / 2, width: end[0] - start[0], height: height },
-            { x: params.coordSys.x, y: params.coordSys.y, width: params.coordSys.width, height: params.coordSys.height }
-        );
-
-        return rectShape && { type: 'rect', shape: rectShape, style: { fill: STATUS_COLORS[api.value(3)] } };
+   function renderItem(params, api) {
+        // params.context.dataIndex 是当前数据项的索引
+        // api.value(n) 用于获取当前数据项 value 数组的第 n 个值
+        const categoryIndex = api.value(0); // Y 轴索引
+        const startTime = api.value(1);     // 开始时间戳
+        const endTime = api.value(2);       // 结束时间戳
+        // 将数据坐标转换为画布上的物理坐标
+        const startPoint = api.coord([startTime, categoryIndex]);
+        const endPoint = api.coord([endTime, categoryIndex]);
+        // 如果坐标无效（例如数据点在当前视图范围之外），则不渲染
+        if (!startPoint || !endPoint) {
+            return;
+        }
+        const height = api.size([0, 1])[1] * 0.8; // 计算条块的高度
+        const width = endPoint[0] - startPoint[0];
+        // 定义矩形的形状
+        const rectShape = {
+            x: startPoint[0],
+            y: startPoint[1] - height / 2,
+            width: width,
+            height: height
+        };
+        // 使用 ECharts 内置的裁剪函数，确保条块不会画出图表区域
+        const clippedRect = echarts.graphic.clipRectByRect(rectShape, {
+            x: params.coordSys.x,
+            y: params.coordSys.y,
+            width: params.coordSys.width,
+            height: params.coordSys.height
+        });
+        // 返回最终的图形元素定义
+        return clippedRect && {
+            type: 'rect',
+            shape: clippedRect,
+            style: {
+                fill: STATUS_COLORS[api.value(3)] // 从 value[3] 获取颜色
+            }
+        };
     }
 
-    function renderUptimeHistory(data) {
+ function renderUptimeHistory(data) {
         if (!timelineChartContainer) {
             return;
         }
@@ -274,98 +299,92 @@ document.addEventListener('DOMContentLoaded', () => {
             setChartEmptyState(timelineChart, timelineChartContainer, '没有选中任何网站或当前时间范围无数据。');
             return;
         }
-
         setChartEmptyState(timelineChart, timelineChartContainer, null);
-
         const siteNames = Object.keys(data);
-        const series = [];
         const chartHeight = Math.max(160, siteNames.length * 42 + 80);
         timelineChartContainer.style.height = `${chartHeight}px`;
         timelineChart.resize();
-
+        const allSiteData = [];
         siteNames.forEach((siteName, index) => {
-            const siteData = data[siteName].timeline_data.map(item => [index, item[0], item[1], item[2], item[3]]);
-            series.push({
-                name: siteName,
-                type: 'custom',
-                renderItem,
-                itemStyle: { opacity: 0.85 },
-                encode: { x: [1, 2], y: 0 },
-                data: siteData
+            const siteData = data[siteName].timeline_data.map(item => {
+                // 准备 custom series 需要的数据格式
+                // value: [Y轴索引, X开始, X结束, 状态ID, 详情]
+                return {
+                    name: siteName, // 把网站名存在 name 里，方便 tooltip
+                    value: [index, item[0], item[1], item[2], item[3]]
+                };
             });
+            allSiteData.push(...siteData);
         });
-
-        const startBoundary = parseDate(currentParams.start_iso);
-        const endBoundary = parseDate(currentParams.end_iso);
-
         const option = {
             tooltip: {
                 trigger: 'item',
-                axisPointer: {
-                    type: 'shadow'
-                },
                 formatter: function (params) {
-                    if (!params || params.seriesType !== 'custom') {
+                    if (params.seriesType !== 'custom') {
                         return '';
                     }
-                    const seriesName = params.seriesName;
-                    const details = params.value[4];
-                    const startLabel = formatChartTooltipTime(params.value[1]);
-                    const endLabel = formatChartTooltipTime(params.value[2]);
-                    const status = params.value[3];
-                    let tip = `<strong>${seriesName}</strong><br/>时间: ${startLabel} - ${endLabel}<br/>${details}`;
+                    const siteName = params.name;
+                    const value = params.value;
+                    const startLabel = formatChartTooltipTime(value[1]);
+                    const endLabel = formatChartTooltipTime(value[2]);
+                    const status = value[3];
+                    const details = value[4];
+                    let tip = `<strong>${siteName}</strong><br/>时间: ${startLabel} - ${endLabel}<br/>${details}`;
                     if (status === 3 || status === 2) {
                         tip += '<br/><span style="color: #3498db; font-size: 11px;">💡 点击查看相关告警</span>';
                     }
                     return tip;
                 }
             },
-            dataZoom: [
-                {
-                    type: 'slider',
-                    filterMode: 'weakFilter',
-                    showDataShadow: false,
-                    bottom: 6,
-                    height: 24,
-                    borderColor: 'transparent',
-                    backgroundColor: '#e2e2e2',
-                    handleIcon: 'path://M10.7,11.9H9.3c-4.9,0.3-8.8,4.4-8.8,9.4c0,5,3.9,9.1,8.8,9.4h1.3c4.9-0.3,8.8-4.4,8.8-9.4C19.5,16.3,15.6,12.2,10.7,11.9z M13.3,24.4H6.7V23h6.6V24.4z M13.3,22H6.7v-1.4h6.6V22z',
-                    handleSize: 20,
-                    handleStyle: { color: '#fff', shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.3)' },
-                    zoomLock: false,
-                    moveOnMouseWheel: false,
-                    zoomOnMouseWheel: false
-                }
-            ],
+            dataZoom: [ /* dataZoom 配置保持不变 */ {
+                type: 'slider',
+                filterMode: 'weakFilter',
+                showDataShadow: false,
+                bottom: 6,
+                height: 24,
+                borderColor: 'transparent',
+                backgroundColor: '#e2e2e2',
+                handleIcon: 'path://M10.7,11.9H9.3c-4.9,0.3-8.8,4.4-8.8,9.4c0,5,3.9,9.1,8.8,9.4h1.3c4.9-0.3,8.8-4.4,8.8-9.4C19.5,16.3,15.6,12.2,10.7,11.9z M13.3,24.4H6.7V23h6.6V24.4z M13.3,22H6.7v-1.4h6.6V22z',
+                handleSize: 20,
+                handleStyle: { color: '#fff', shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.3)' },
+            }],
             grid: { top: 25, left: 120, right: 30, bottom: 90 },
             xAxis: {
                 type: 'time',
-                axisLabel: {
-                    formatter: value => formatChartAxisTime(value)
-                }
+                axisLabel: { formatter: value => formatChartAxisTime(value) }
             },
-            yAxis: { type: 'category', data: siteNames, axisLabel: { interval: 0 } },
-            series
+            yAxis: {
+                type: 'category',
+                data: siteNames,
+                axisLabel: { interval: 0 }
+            },
+            series: [{
+                type: 'custom',
+                renderItem: renderItem, // 关键：指定我们的渲染函数
+                data: allSiteData,
+                encode: {
+                    // 告诉 ECharts value 数组的哪个索引对应哪个轴
+                    x: [1, 2], // value[1] 和 value[2] 对应 X 轴
+                    y: 0       // value[0] 对应 Y 轴
+                }
+            }]
         };
         timelineChart.setOption(option, true);
-        
-        // 添加点击事件监听，实现联动
+
         timelineChart.off('click');
         timelineChart.on('click', function (params) {
-            if (params.seriesType === 'custom' && params.value) {
-                const status = params.value[3];
-                const startTime = params.value[1];
-                const endTime = params.value[2];
-                const siteName = params.seriesName;
-                
-                // 只有宕机或慢响应才联动
+            if (params.seriesType === 'custom' && Array.isArray(params.value)) {
+                const siteName = params.name;
+                const value = params.value;
+                const startTime = value[1];
+                const endTime = value[2];
+                const status = value[3];
                 if (status === 3 || status === 2) {
                     filterAndScrollToAlerts(siteName, startTime, endTime, status);
                 }
             }
         });
     }
-    
     // 联动函数：筛选并滚动到告警
     function filterAndScrollToAlerts(siteName, startTime, endTime, status) {
         if (!alertHistoryBody || !latestHistoryData) {
