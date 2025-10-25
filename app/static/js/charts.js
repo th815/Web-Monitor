@@ -15,12 +15,22 @@ function renderItem(params, api) {
     const end = api.coord([api.value(2), categoryIndex]);
     const height = api.size([0, 1])[1] * 0.8;
 
+    const width = end[0] - start[0];
+    if (width <= 0) {
+        return null;
+    }
+
     const rectShape = echarts.graphic.clipRectByRect(
-        { x: start[0], y: start[1] - height / 2, width: end[0] - start[0], height: height },
+        { x: start[0], y: start[1] - height / 2, width: width, height: height },
         { x: params.coordSys.x, y: params.coordSys.y, width: params.coordSys.width, height: params.coordSys.height }
     );
 
-    return rectShape && { type: 'rect', shape: rectShape, style: { fill: STATUS_COLORS[api.value(3)] } };
+    return rectShape && { 
+        type: 'rect', 
+        shape: rectShape, 
+        style: { fill: STATUS_COLORS[api.value(3)] },
+        z2: 10
+    };
 }
 
 export const renderUptimeHistory = (data, charts, currentParams, onClickCallback) => {
@@ -52,13 +62,17 @@ export const renderUptimeHistory = (data, charts, currentParams, onClickCallback
             renderItem,
             itemStyle: { opacity: 0.85 },
             encode: { x: [1, 2], y: 0 },
-            data: siteData
+            data: siteData,
+            progressive: 400,
+            progressiveThreshold: 2000,
+            progressiveChunkMode: 'mod'
         });
     });
 
     const rangeSpan = currentParams ? getTimeRangeSpanMs(currentParams.start_iso, currentParams.end_iso) : null;
 
     const option = {
+        animation: false,
         tooltip: {
             trigger: 'item',
             axisPointer: {
@@ -94,7 +108,8 @@ export const renderUptimeHistory = (data, charts, currentParams, onClickCallback
                 handleStyle: { color: '#fff', shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.3)' },
                 zoomLock: false,
                 moveOnMouseWheel: false,
-                zoomOnMouseWheel: false
+                zoomOnMouseWheel: false,
+                realtime: true
             }
         ],
         grid: { top: 25, left: 120, right: 30, bottom: 90 },
